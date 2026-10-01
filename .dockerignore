@@ -1,0 +1,15 @@
+.git
+.github
+.impeccable
+node_modules
+dist
+coverage
+test
+scripts
+eval
+.env
+.env.*
+!.env.example
+*.md
+*.log
+.DS_Store
