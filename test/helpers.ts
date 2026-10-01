@@ -1,4 +1,5 @@
 import type { Embedder } from '../src/embeddings.js';
+import type { ChatMessage, Llm } from '../src/llm.js';
 
 const DEFAULT_DIMENSIONS = 64;
 
@@ -35,4 +36,38 @@ export function bagOfWordsEmbedder(dims: number = DEFAULT_DIMENSIONS): Embedder 
       }
       return vector;
     });
+}
+
+/** An `Llm` whose single reply is computed by `handler` from the sent messages. */
+export function scriptedLlm(handler: (messages: ChatMessage[]) => string): Llm {
+  return {
+    async complete(messages: ChatMessage[]): Promise<string> {
+      return handler(messages);
+    },
+  };
+}
+
+export interface ParsedPassage {
+  id: string;
+  source: string;
+  location: string;
+  text: string;
+}
+
+const PASSAGE_BLOCK = /<passage id="([^"]*)" source="([^"]*)" location="([^"]*)">\n([\s\S]*?)\n<\/passage>/g;
+
+/**
+ * Parses the `<passage id="..." source="..." location="...">...</passage>`
+ * blocks that `buildMessages` renders into the user message, so a scripted
+ * `Llm` can react to the passages actually retrieved for a question.
+ */
+export function parsePassagesFromUserMessage(messages: readonly ChatMessage[]): ParsedPassage[] {
+  const userContent = messages.find((message) => message.role === 'user')?.content ?? '';
+  const passages: ParsedPassage[] = [];
+  for (const match of userContent.matchAll(PASSAGE_BLOCK)) {
+    const [, id, source, location, text] = match;
+    if (id === undefined || source === undefined || location === undefined || text === undefined) continue;
+    passages.push({ id, source, location, text });
+  }
+  return passages;
 }

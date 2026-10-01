@@ -149,6 +149,19 @@ export function parseModelJson(raw: string): unknown {
   }
 }
 
+/**
+ * Throws a clear error naming the missing model, the base URL, and the
+ * available ids, unless `model` is one of `available`. Meant to fail fast
+ * at startup so a wrong model name is never silently used.
+ */
+export function assertModelAvailable(available: readonly string[], model: string, baseURL: string): void {
+  if (available.includes(model)) return;
+  const list = available.length > 0 ? available.join(', ') : 'none';
+  throw new Error(
+    `LLM_MODEL "${model}" is not available at ${baseURL}. Available models: ${list}. Fix LLM_MODEL or load the model.`,
+  );
+}
+
 /** Lists the model ids available at the configured endpoint. */
 export async function listModels(config: LlmConfig, options?: { client?: OpenAI }): Promise<string[]> {
   const client = options?.client ?? new OpenAI({ baseURL: config.baseURL, apiKey: config.apiKey });

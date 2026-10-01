@@ -5,6 +5,7 @@ import type { LlmConfig } from '../src/config.js';
 import {
   ANSWER_SCHEMA,
   ModelOutputError,
+  assertModelAvailable,
   createOpenAILlm,
   listModels,
   parseModelJson,
@@ -196,6 +197,26 @@ test('createOpenAILlm rejects with a ModelOutputError for a genuinely empty resp
 });
 
 // --- listModels --------------------------------------------------------
+
+// --- assertModelAvailable --------------------------------------------------
+
+test('assertModelAvailable does nothing when the model is in the available list', () => {
+  assert.doesNotThrow(() => assertModelAvailable(['a', 'b', 'x'], 'x', 'http://host/v1'));
+});
+
+test('assertModelAvailable throws naming the missing model, the base URL, and the available ids', () => {
+  assert.throws(
+    () => assertModelAvailable(['a', 'b'], 'x', 'http://host/v1'),
+    /LLM_MODEL "x" is not available at http:\/\/host\/v1\. Available models: a, b\. Fix LLM_MODEL or load the model\.$/,
+  );
+});
+
+test('assertModelAvailable says "none" when no models are available', () => {
+  assert.throws(
+    () => assertModelAvailable([], 'x', 'http://host/v1'),
+    /Available models: none\. Fix LLM_MODEL or load the model\.$/,
+  );
+});
 
 test('listModels returns the ids from the models list endpoint', async () => {
   const { fetch, calls } = fakeFetch(() => ({
