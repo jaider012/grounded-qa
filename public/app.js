@@ -164,7 +164,7 @@ function buildTicket(question, result) {
 
       const head = document.createElement('p');
       head.className = 'ticket-citation-head';
-      head.textContent = `${citation.source}, ${citation.location}`;
+      head.textContent = `${citation.source} · ${citation.location}`;
       item.appendChild(head);
 
       const passageEl = document.createElement('p');

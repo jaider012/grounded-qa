@@ -3,6 +3,16 @@
    itemized lines; a refusal comes out stamped 86. Light theme only: the
    scene is a bright back-of-house counter / daylit office. */
 
+/* Barlow Condensed 700 (SIL Open Font License, see fonts/OFL.txt), self-hosted
+   because the Content-Security-Policy only allows same-origin fonts. */
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('/fonts/barlow-condensed-700-latin.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Palette (restrained) */
   --color-page-bg: #e9ebec;
@@ -170,8 +180,9 @@ a {
 }
 
 .site-header h1 {
-  font-size: var(--step-4);
-  letter-spacing: var(--tracking-floor);
+  font-family: 'Barlow Condensed', var(--font-sans);
+  font-size: calc(var(--step-4) * 1.25);
+  letter-spacing: 0;
 }
 
 .site-tagline {
@@ -527,6 +538,14 @@ a {
 .retrieved-details summary {
   cursor: pointer;
   font-weight: 600;
+}
+
+.retrieved-details summary::marker {
+  color: var(--color-red);
+}
+
+.retrieved-details summary::-webkit-details-marker {
+  color: var(--color-red);
 }
 
 .retrieved-table {
