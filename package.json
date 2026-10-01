@@ -1,0 +1,32 @@
+{
+  "name": "grounded-qa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Answers questions only from a built-in FAQ and uploaded PDFs, with verified verbatim citations.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "eval": "tsx scripts/eval.ts"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "openai": "^7.26.0",
+    "unpdf": "^1.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^22.20.4",
+    "pdf-lib": "^1.17.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
