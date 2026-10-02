@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars and adjust if needed. Every value below already
+# matches the default in variables.tf -- this file exists so the required
+# values are visible in one place before the first `terraform apply`.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+aws_region   = "us-east-1"
+service_name = "grounded-qa"
+
+# Set this to the tag you just pushed (see DEPLOY.md) before the
+# `terraform apply` that creates or updates the App Runner service.
+image_tag = "latest"
+
+bedrock_chat_model_id          = "deepseek.v3.2"
+bedrock_chat_fallback_model_id = "amazon.nova-lite-v1:0"
+bedrock_embedding_model_id     = "amazon.titan-embed-text-v2:0"
+
+tags = {
+  project = "grounded-qa"
+}

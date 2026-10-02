@@ -6,3 +6,11 @@ coverage/
 !.env.example
 *.log
 .DS_Store
+
+# Terraform: local working dir, state (may contain resource details) and real variable values
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

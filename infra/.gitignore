@@ -1,0 +1,15 @@
+# Local Terraform state/cache -- this stack has no remote backend configured,
+# so these would otherwise land on disk here when someone runs `terraform
+# apply` (never run from an agent; see DEPLOY.md).
+.terraform/
+.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Real values (region, model IDs, tags) -- copy terraform.tfvars.example to
+# this instead of editing the example in place.
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
