@@ -50,6 +50,21 @@ await store.addDocument(CATERING_SOURCE, cateringChunks());
 
 const llm = createLlm(config);
 
+/** The shared store, or a fresh one with the case's extra documents added (for that case only). */
+async function storeFor(golden: GoldenCase): Promise<VectorStore> {
+  if (golden.extraDocuments === undefined) return store;
+  const caseStore = new VectorStore(embedder);
+  await caseStore.addDocument(FAQ_SOURCE, faqChunks());
+  await caseStore.addDocument(CATERING_SOURCE, cateringChunks());
+  for (const doc of golden.extraDocuments) {
+    await caseStore.addDocument(
+      doc.name,
+      doc.chunks.map((text, index) => ({ location: `Passage ${index + 1}`, text })),
+    );
+  }
+  return caseStore;
+}
+
 const goldenPath = fileURLToPath(new URL('../eval/golden.json', import.meta.url));
 const rawGolden: unknown = JSON.parse(await readFile(goldenPath, 'utf8'));
 const cases = parseGolden(rawGolden);
@@ -64,7 +79,7 @@ for (const golden of cases) {
   let detail: string;
 
   try {
-    const result = await answerQuestion({ store, llm }, golden.question);
+    const result = await answerQuestion({ store: await storeFor(golden), llm }, golden.question);
     score = scoreCase(golden, result);
     if (score.pass) {
       const locations = result.citations.map((citation) => citation.location);

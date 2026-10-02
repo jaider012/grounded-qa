@@ -195,3 +195,62 @@ test('parseGolden rejects a non-boolean expectAnswerable', () => {
   const raw = [{ id: 'g1', category: 'answerable', question: 'Q?', expectAnswerable: 'yes' }];
   assert.throws(() => parseGolden(raw), /expectAnswerable/);
 });
+
+// --- conflict cases: expectSources and extraDocuments --------------------------
+
+test('scoreCase with expectSources passes only when every expected source is cited', () => {
+  const g = golden({
+    id: 'g1',
+    category: 'conflict',
+    expectAnswerable: true,
+    expectSources: ['Bonaire Bites FAQ', 'Winter Hours Notice'],
+  });
+  const both = askResult({
+    citations: [
+      { source: 'Bonaire Bites FAQ', location: 'Hours', quote: 'q', passage: 'p' },
+      { source: 'Winter Hours Notice', location: 'Passage 1', quote: 'q2', passage: 'p2' },
+    ],
+  });
+  const onlyOne = askResult({
+    citations: [{ source: 'Bonaire Bites FAQ', location: 'Hours', quote: 'q', passage: 'p' }],
+  });
+
+  assert.equal(scoreCase(g, both).pass, true);
+  const failed = scoreCase(g, onlyOne);
+  assert.equal(failed.pass, false);
+  assert.match(failed.reason, /Winter Hours Notice/);
+});
+
+test('scoreCase with expectSources still fails on a refusal', () => {
+  const g = golden({ id: 'g1', category: 'conflict', expectAnswerable: true, expectSources: ['A', 'B'] });
+  assert.equal(scoreCase(g, askResult({ answerable: false, answer: '', citations: [] })).pass, false);
+});
+
+test('parseGolden accepts expectSources and extraDocuments', () => {
+  const [parsed] = parseGolden([
+    {
+      id: 'g18',
+      category: 'conflict',
+      question: 'Q?',
+      expectAnswerable: true,
+      expectSources: ['A', 'B'],
+      extraDocuments: [{ name: 'B', chunks: ['text one'] }],
+    },
+  ]);
+  assert.deepEqual(parsed?.expectSources, ['A', 'B']);
+  assert.deepEqual(parsed?.extraDocuments, [{ name: 'B', chunks: ['text one'] }]);
+});
+
+test('parseGolden rejects malformed expectSources and extraDocuments', () => {
+  const base = { id: 'g1', category: 'conflict', question: 'Q?', expectAnswerable: true };
+  assert.throws(() => parseGolden([{ ...base, expectSources: 'A' }]), /expectSources/);
+  assert.throws(() => parseGolden([{ ...base, extraDocuments: [{ name: 'B', chunks: [] }] }]), /extraDocuments/);
+  assert.throws(() => parseGolden([{ ...base, extraDocuments: [{ name: '', chunks: ['t'] }] }]), /extraDocuments/);
+  assert.throws(() => parseGolden([{ ...base, extraDocuments: 'x' }]), /extraDocuments/);
+});
+
+test('summarize counts the conflict category', () => {
+  const g = golden({ id: 'g1', category: 'conflict', expectAnswerable: true });
+  const result = summarize([{ golden: g, score: { pass: true, reason: 'ok' } }]);
+  assert.deepEqual(result.byCategory.conflict, { passed: 1, total: 1 });
+});

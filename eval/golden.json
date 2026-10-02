@@ -115,5 +115,20 @@
     "category": "unanswerable",
     "question": "Do you offer a dessert add-on for catering orders?",
     "expectAnswerable": false
+  },
+  {
+    "id": "g18",
+    "category": "conflict",
+    "question": "What are your opening hours?",
+    "expectAnswerable": true,
+    "expectSources": ["Bonaire Bites FAQ", "Winter Hours Notice"],
+    "extraDocuments": [
+      {
+        "name": "Winter Hours Notice",
+        "chunks": [
+          "Winter schedule: all locations are open Wednesday through Monday, 10:00 AM to 8:00 PM, and closed on Tuesdays."
+        ]
+      }
+    ]
   }
 ]

@@ -1,6 +1,6 @@
 import type { AskResult } from '../src/answer.js';
 
-export type GoldenCategory = 'answerable' | 'unanswerable' | 'partial' | 'adversarial';
+export type GoldenCategory = 'answerable' | 'unanswerable' | 'partial' | 'adversarial' | 'conflict';
 
 export interface GoldenCase {
   id: string;
@@ -9,6 +9,15 @@ export interface GoldenCase {
   expectAnswerable: boolean;
   expectLocation?: string;
   expectSource?: string;
+  /** Conflict cases: every listed source must appear among the citations. */
+  expectSources?: string[];
+  /** Documents indexed (with the built-in sources) for this case only. */
+  extraDocuments?: ExtraDocument[];
+}
+
+export interface ExtraDocument {
+  name: string;
+  chunks: string[];
 }
 
 export interface CaseScore {
@@ -34,6 +43,14 @@ export function scoreCase(golden: GoldenCase, result: AskResult): CaseScore {
     return { pass: true, reason: 'refusal as expected' };
   }
 
+  if (golden.expectSources !== undefined) {
+    const cited = new Set(result.citations.map((citation) => citation.source));
+    const missing = golden.expectSources.filter((source) => !cited.has(source));
+    return missing.length === 0
+      ? { pass: true, reason: 'citations from all expected sources' }
+      : { pass: false, reason: `no citation from source(s): ${missing.join(', ')}` };
+  }
+
   const expectedSource = golden.expectSource ?? DEFAULT_SOURCE;
   const matched = result.citations.some(
     (citation) => citation.location === golden.expectLocation && citation.source === expectedSource,
@@ -56,6 +73,7 @@ export function summarize(
     unanswerable: { passed: 0, total: 0 },
     partial: { passed: 0, total: 0 },
     adversarial: { passed: 0, total: 0 },
+    conflict: { passed: 0, total: 0 },
   };
 
   let passed = 0;
@@ -71,10 +89,27 @@ export function summarize(
   return { passed, total: rows.length, byCategory };
 }
 
-const CATEGORIES: readonly GoldenCategory[] = ['answerable', 'unanswerable', 'partial', 'adversarial'];
+const CATEGORIES: readonly GoldenCategory[] = ['answerable', 'unanswerable', 'partial', 'adversarial', 'conflict'];
 
 function isGoldenCategory(value: unknown): value is GoldenCategory {
   return typeof value === 'string' && (CATEGORIES as readonly string[]).includes(value);
+}
+
+function isExtraDocuments(value: unknown): value is ExtraDocument[] {
+  return (
+    Array.isArray(value) &&
+    value.every((doc) => {
+      if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) return false;
+      const { name, chunks } = doc as Record<string, unknown>;
+      return (
+        typeof name === 'string' &&
+        name.length > 0 &&
+        Array.isArray(chunks) &&
+        chunks.length > 0 &&
+        chunks.every((chunk) => typeof chunk === 'string' && chunk.length > 0)
+      );
+    })
+  );
 }
 
 function describeEntry(entry: unknown, index: number): string {
@@ -124,7 +159,24 @@ function parseGoldenCase(entry: unknown, index: number): GoldenCase {
     throw new Error(`Golden case ${label}: "expectSource" must be a string when present.`);
   }
 
+  const expectSources = record['expectSources'];
+  if (
+    expectSources !== undefined &&
+    !(Array.isArray(expectSources) && expectSources.length > 0 && expectSources.every((s) => typeof s === 'string'))
+  ) {
+    throw new Error(`Golden case ${label}: "expectSources" must be a non-empty array of strings when present.`);
+  }
+
+  const extraDocuments = record['extraDocuments'];
+  if (extraDocuments !== undefined && !isExtraDocuments(extraDocuments)) {
+    throw new Error(
+      `Golden case ${label}: "extraDocuments" must be an array of {name, chunks} with a non-empty name and at least one string chunk.`,
+    );
+  }
+
   const golden: GoldenCase = { id, category, question, expectAnswerable };
+  if (expectSources !== undefined) golden.expectSources = expectSources as string[];
+  if (extraDocuments !== undefined) golden.extraDocuments = extraDocuments;
   if (expectLocation !== undefined) golden.expectLocation = expectLocation;
   if (expectSource !== undefined) golden.expectSource = expectSource;
   return golden;
