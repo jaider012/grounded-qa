@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T00:00:00.000Z",
+  "title": "Design System: Grounded Q&A",
+  "extensions": {
+    "colorMeta": {
+      "page-bg": { "role": "neutral", "displayName": "Void", "canonical": "#0e1012", "tonalRamp": ["#0e1012", "#15181b", "#1b1f23", "#2a2f35", "#4a515a", "#6d757e", "#9aa3ad", "#e7eaee"] },
+      "sidebar-bg": { "role": "neutral", "displayName": "Raised Sidebar", "canonical": "#15181b", "tonalRamp": ["#0e1012", "#15181b", "#1b1f23", "#2a2f35", "#4a515a", "#6d757e", "#9aa3ad", "#e7eaee"] },
+      "card-bg": { "role": "neutral", "displayName": "Card Surface", "canonical": "#1b1f23", "tonalRamp": ["#0e1012", "#15181b", "#1b1f23", "#2a2f35", "#4a515a", "#6d757e", "#9aa3ad", "#e7eaee"] },
+      "border": { "role": "neutral", "displayName": "Hairline Border", "canonical": "#2a2f35", "tonalRamp": ["#0e1012", "#15181b", "#1b1f23", "#2a2f35", "#4a515a", "#6d757e", "#9aa3ad", "#e7eaee"] },
+      "text": { "role": "neutral", "displayName": "Primary Text", "canonical": "#e7eaee", "tonalRamp": ["#0e1012", "#15181b", "#1b1f23", "#2a2f35", "#4a515a", "#6d757e", "#9aa3ad", "#e7eaee"] },
+      "text-secondary": { "role": "neutral", "displayName": "Secondary Text", "canonical": "#9aa3ad", "tonalRamp": ["#0e1012", "#15181b", "#1b1f23", "#2a2f35", "#4a515a", "#6d757e", "#9aa3ad", "#e7eaee"] },
+      "mint": { "role": "primary", "displayName": "Signal Mint", "canonical": "oklch(85% 0.17 165)", "tonalRamp": ["#0b3b28", "#116e45", "#17a261", "#1fcf7e", "#5ef2b8", "#86f5cb", "#b3f9dd", "#e2fcf0"] },
+      "red": { "role": "destructive", "displayName": "Muted Red", "canonical": "oklch(68% 0.18 25)", "tonalRamp": ["#4a0f0f", "#7a1919", "#aa2424", "#d63f3f", "#ff6b6b", "#ff9494", "#ffbcbc", "#ffe3e3"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The 'Grounded Q&A' wordmark in the sidebar header only." },
+      "title": { "displayName": "Title", "purpose": "Ask textarea entered text and answer body text." },
+      "body": { "displayName": "Body", "purpose": "Running UI text: document names, chip labels, taglines." },
+      "label": { "displayName": "Label", "purpose": "Uppercase section labels inside cards (e.g. 'Sources') and the built-in badge." },
+      "mono": { "displayName": "Mono/Data", "purpose": "Document chunk counts, source document·location headers, retrieved-passage table cells." }
+    },
+    "shadows": [
+      { "name": "ambient-card", "value": "0 1px 2px rgba(0,0,0,0.4), 0 8px 20px -10px rgba(0,0,0,0.5)", "purpose": "Soft lift under every answer card; paired with a hairline border, never used alone." }
+    ],
+    "motion": [
+      { "name": "card-enter", "value": "200ms ease-out, opacity 0→1 + translateY(6px→0)", "purpose": "The single authored entrance for a new answer card; disabled under prefers-reduced-motion: reduce." }
+    ],
+    "breakpoints": [
+      { "name": "stack", "value": "900px", "purpose": "Below this, the sidebar collapses to a static top section above the ask bar." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Ask Button (primary)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action: submits the question. Mint fill, bold text, disables to gray with a progress cursor while answering.",
+      "html": "<button type=\"submit\" class=\"ds-btn-primary\">Ask</button>",
+      "css": ".ds-btn-primary { appearance: none; border: none; border-radius: 8px; background: #5ef2b8; color: #0e1012; font-weight: 700; font-size: 1rem; padding: 0.75rem 2rem; cursor: pointer; } .ds-btn-primary:hover:not(:disabled) { background: #7ef5c6; } .ds-btn-primary:disabled { background: #2a2f35; color: #9aa3ad; cursor: progress; } .ds-btn-primary:focus-visible { outline: 2px solid #5ef2b8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Add a PDF (secondary ghost)",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary action in the sidebar: opens the file picker to upload a PDF.",
+      "html": "<button type=\"button\" class=\"ds-btn-ghost\">Add a PDF</button>",
+      "css": ".ds-btn-ghost { appearance: none; align-self: flex-start; border: 1px solid #2a2f35; border-radius: 8px; background: transparent; color: #e7eaee; font-weight: 600; font-size: 0.9rem; padding: 0.5rem 1rem; cursor: pointer; } .ds-btn-ghost:hover { border-color: #9aa3ad; } .ds-btn-ghost:focus-visible { outline: 2px solid #5ef2b8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Document Remove (two-step confirm)",
+      "kind": "button",
+      "refersTo": "button-ghost-destructive",
+      "description": "Inline destructive control: first click swaps label to red 'Confirm' for ~4s instead of opening a modal.",
+      "html": "<button type=\"button\" class=\"ds-remove\">Remove</button><button type=\"button\" class=\"ds-remove ds-remove--confirming\">Confirm</button>",
+      "css": ".ds-remove { appearance: none; border: 1px solid #2a2f35; border-radius: 4px; background: transparent; color: #9aa3ad; padding: 0.25rem 0.5rem; line-height: 1; cursor: pointer; } .ds-remove:hover { color: #ff6b6b; border-color: #ff6b6b; } .ds-remove--confirming { color: #ff6b6b; border-color: #ff6b6b; font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.75rem; }"
+    },
+    {
+      "name": "Example Question Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "One-shot suggestion chip; clicking populates the ask textarea with its text.",
+      "html": "<button type=\"button\" class=\"ds-chip\">When are you closed?</button>",
+      "css": ".ds-chip { appearance: none; border: 1px solid #2a2f35; border-radius: 999px; background: #1b1f23; color: #e7eaee; padding: 0.5rem 1rem; font-size: 0.875rem; cursor: pointer; } .ds-chip:hover { border-color: #9aa3ad; } .ds-chip:focus-visible { outline: 2px solid #5ef2b8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ask Textarea",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Multi-line question input with mint caret, part of the command-bar ask form.",
+      "html": "<textarea class=\"ds-textarea\" rows=\"2\" maxlength=\"500\" placeholder=\"e.g. What are your hours on Sunday?\"></textarea>",
+      "css": ".ds-textarea { width: 100%; resize: vertical; padding: 0.75rem 1rem; border: 1px solid #2a2f35; border-radius: 8px; background: #1b1f23; color: #e7eaee; font-size: 1.2rem; line-height: 1.4; caret-color: #5ef2b8; } .ds-textarea::placeholder { color: #9aa3ad; } .ds-textarea:focus-visible { outline: 2px solid #5ef2b8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Answer Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Signature component: the asked question, the answer or refusal, a Sources list with a mint-highlighted verbatim quote, and a collapsible retrieved-passages table. Newest renders first, entering with a 200ms fade + 6px rise.",
+      "html": "<article class=\"ds-card\"><p class=\"ds-card-question\">Do you deliver, and what is the minimum order?</p><p class=\"ds-card-text\">Yes, delivery is available with a minimum order of $15.</p><p class=\"ds-card-label\">Sources</p><div class=\"ds-source\"><div class=\"ds-source-head\">Bonaire Bites — Company FAQ · Q12</div><p class=\"ds-source-passage\">We deliver island-wide with a <mark class=\"ds-mark\">minimum order of $15</mark>.</p></div></article>",
+      "css": ".ds-card { background: #1b1f23; border: 1px solid #2a2f35; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 20px -10px rgba(0,0,0,0.5); animation: ds-card-enter 200ms ease-out both; } @keyframes ds-card-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } } .ds-card-question { font-size: 0.875rem; font-weight: 600; color: #9aa3ad; margin-bottom: 0.75rem; } .ds-card-text { font-size: 1.2rem; line-height: 1.5; color: #e7eaee; } .ds-card-label { margin-top: 1rem; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #9aa3ad; } .ds-source { margin-top: 0.5rem; border-top: 1px solid #2a2f35; padding-top: 0.75rem; } .ds-source-head { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; color: #9aa3ad; margin-bottom: 0.25rem; } .ds-source-passage { font-size: 0.9rem; line-height: 1.5; color: #e7eaee; } .ds-mark { background: rgba(94,242,184,0.16); color: #e7eaee; text-decoration: underline; text-decoration-color: #5ef2b8; text-underline-offset: 0.15em; border-radius: 2px; padding: 0 0.15em; } @media (prefers-reduced-motion: reduce) { .ds-card { animation: none !important; opacity: 1 !important; transform: none !important; } }"
+    },
+    {
+      "name": "Document List Item",
+      "kind": "nav",
+      "refersTo": "card",
+      "description": "Sidebar manifest row: document name, monospace chunk count, optional built-in pill badge, remove button.",
+      "html": "<li class=\"ds-doc-item\"><span class=\"ds-doc-name\">Bonaire Bites — Company FAQ</span><span class=\"ds-doc-badge\">Built-in</span><span class=\"ds-doc-count\">42 chunks</span><button type=\"button\" class=\"ds-remove\">Remove</button></li>",
+      "css": ".ds-doc-item { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; row-gap: 0.25rem; padding: 0.5rem 0; border-bottom: 1px solid #2a2f35; } .ds-doc-name { flex: 1 1 100%; font-size: 0.9rem; color: #e7eaee; } .ds-doc-badge { border: 1px solid #2a2f35; border-radius: 999px; padding: 0.1em 0.6em; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #9aa3ad; } .ds-doc-count { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; color: #9aa3ad; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Operator's Console",
+    "overview": "A near-black workspace built for someone verifying machine-generated answers against source documents, not a marketing surface. The sidebar is a document manifest, not a nav decoration; the main panel is a command bar feeding a stack of evidence cards. Density is calm and functional: one accent color, flat surfaces that step up in lightness (not shadow) to signal hierarchy, and a single quiet entrance animation reserved for new answers. This build replaced an earlier kitchen-ticket-rail direction entirely; it refuses chat-bubble threads, decorative accent bars, and anything that performs warmth instead of trust.",
+    "keyCharacteristics": [
+      "Three-step dark surface stack (page → sidebar/card → border) instead of shadows for separation.",
+      "One mint accent used only for the primary action, focus rings, and quote highlighting — never decoration.",
+      "Condensed display face reserved for the wordmark alone; every control uses the system sans stack.",
+      "Monospace reserved for data (counts, source locations, retrieved-passage scores), never for prose."
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "Mint appears only on the Ask action, focus states, the caret, and the quote highlight. No other UI element borrows it for emphasis or decoration.", "section": "colors" },
+      { "name": "The Tonal-Step Rule", "body": "Depth comes from three ascending surface lightness steps (page → sidebar/card → nothing brighter), not from multiple shadow weights or colored overlays.", "section": "colors" },
+      { "name": "The One Display Face Rule", "body": "Barlow Condensed renders the wordmark and nothing else. Every button, label, card, and data value uses the system sans or mono stack.", "section": "typography" },
+      { "name": "The No-Hard-Shadow Rule", "body": "Shadows are diffuse and low-opacity. No offset \"sticker\" or hard-edge shadow appears anywhere in this system.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep mint to exactly one functional accent: the Ask button, focus rings, the caret, and quote highlights.",
+      "Do use the ascending tonal stack (void → sidebar/card → hairline border) for all hierarchy and separation instead of adding new shadow weights.",
+      "Do reserve Barlow Condensed for the wordmark only; every other text element uses the system sans or mono stack.",
+      "Do use the two-step inline confirm pattern (button text swaps to red \"Confirm\" for ~4s) for any future destructive action instead of a modal dialog.",
+      "Do disable the card-enter animation under prefers-reduced-motion: reduce; it is the only authored motion in the system and must stay optional."
+    ],
+    "donts": [
+      "Don't introduce a second accent color or a decorative gradient; the One Accent Rule covers the whole system.",
+      "Don't add hard-edged \"sticker\" shadows or offset borders; this is not a neobrutalist world, and the Ambient Card shadow is the only shadow token.",
+      "Don't add kicker/eyebrow labels above headings as a decorative device; the uppercase Label style exists only as a functional section header (\"Sources\") inside a card, never as ornament.",
+      "Don't reintroduce the earlier kitchen-ticket-rail visual language (paper texture, ticket perforation, warm palette); that world was explicitly replaced by this dark app shell."
+    ]
+  }
+}
