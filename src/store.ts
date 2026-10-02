@@ -149,4 +149,9 @@ export class VectorStore {
   get documentCount(): number {
     return this.#documentOrder.length;
   }
+
+  /** Total chunks held across every document, store-wide. */
+  get totalChunks(): number {
+    return this.#chunks.length;
+  }
 }

@@ -8,6 +8,12 @@ import { ModelOutputError } from './llm.js';
 import { answerQuestion } from './answer.js';
 import { chunkPdfPages } from './chunking.js';
 import { PdfError, extractPdfPages, isPdf } from './pdf.js';
+import type { ExtractPdfOptions } from './pdf.js';
+import { createAuth } from './auth.js';
+import type { Auth } from './auth.js';
+import { createLimits, LimitError } from './limits.js';
+import type { Limits } from './limits.js';
+import { DEFAULT_LIMITS } from './config.js';
 
 export interface AppDeps {
   store: VectorStore;
@@ -17,6 +23,12 @@ export interface AppDeps {
   /** The active provider name (e.g. "openai-compatible" or "bedrock"), surfaced on `GET /healthz`. */
   provider?: string;
   log?: (message: string, error?: unknown) => void;
+  /** Defaults to an unprotected `AUTH_MODE=none` auth (local development and the existing tests). */
+  auth?: Auth;
+  /** Defaults to the safe limits in `DEFAULT_LIMITS` when absent. */
+  limits?: Limits;
+  /** Testing seam, forwarded to `extractPdfPages`: overrides the pdf.js text-extraction call. */
+  pdfExtractTextImpl?: ExtractPdfOptions['extractTextImpl'];
 }
 
 export const MAX_QUESTION_CHARS = 500;
@@ -78,6 +90,8 @@ function runMiddleware(
 export function createApp(deps: AppDeps): express.Express {
   const log = deps.log ?? ((message: string, error?: unknown): void => console.error(message, error));
   const { store, llm, protectedDocuments = [], provider } = deps;
+  const auth = deps.auth ?? createAuth({ mode: 'none', log });
+  const limits = deps.limits ?? createLimits(DEFAULT_LIMITS);
 
   /** Loaded documents in the `GET`/`DELETE` response shape, flagging names that cannot be removed. */
   function listDocumentsResponse(): Array<{ name: string; chunks: number; builtIn: boolean }> {
@@ -85,6 +99,15 @@ export function createApp(deps: AppDeps): express.Express {
       ...document,
       builtIn: protectedDocuments.includes(document.name),
     }));
+  }
+
+  /** Sends 403 and returns `false` unless the signed-in user is an admin. */
+  function requireAdmin(req: Request, res: Response): boolean {
+    if (!req.auth?.isAdmin) {
+      sendError(res, 403, 'Only administrators can add or remove documents.');
+      return false;
+    }
+    return true;
   }
 
   const app = express();
@@ -96,6 +119,12 @@ export function createApp(deps: AppDeps): express.Express {
     res.setHeader('Referrer-Policy', 'no-referrer');
     next();
   });
+
+  // Attaches req.auth and enforces session/CSRF protection (a no-op, fully
+  // open synthetic local admin in AUTH_MODE=none); also serves /auth/* and
+  // GET /api/me. Mounted before static files and every route below, since in
+  // cognito mode the whole app is protected by default.
+  app.use(auth.router);
 
   // public/ does not exist yet (a later task adds the frontend); serve-static
   // checks the filesystem lazily per request, so a missing directory here
@@ -118,7 +147,9 @@ export function createApp(deps: AppDeps): express.Express {
     defParamCharset: 'utf8',
   });
 
-  app.post('/api/documents', async (req, res) => {
+  app.post('/api/documents', limits.uploadLimiter, async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
     try {
       await runMiddleware(upload.single('file'), req, res);
     } catch (error) {
@@ -156,10 +187,15 @@ export function createApp(deps: AppDeps): express.Express {
 
     let pages: string[];
     try {
-      pages = await extractPdfPages(file.buffer);
+      pages = await extractPdfPages(file.buffer, {
+        maxPages: limits.settings.maxPdfPages,
+        timeoutMs: limits.settings.pdfParseTimeoutMs,
+        extractTextImpl: deps.pdfExtractTextImpl,
+      });
     } catch (error) {
       if (error instanceof PdfError) {
-        sendError(res, 422, error.message);
+        const status = error.code === 'too_many_pages' ? 413 : 422;
+        sendError(res, status, error.message);
         return;
       }
       log('POST /api/documents PDF extraction failed', error);
@@ -178,6 +214,20 @@ export function createApp(deps: AppDeps): express.Express {
     }
 
     const name = sanitizeFileName(file.originalname);
+    const isReplacing = store.listDocuments().some((document) => document.name === name);
+    const uploadedCount = store.listDocuments().filter((document) => !protectedDocuments.includes(document.name)).length;
+
+    try {
+      limits.assertDocumentCapacity({ uploadedCount, isReplacing });
+      limits.assertChunkCapacity({ currentTotal: store.totalChunks, adding: parts.length });
+    } catch (error) {
+      if (error instanceof LimitError) {
+        sendError(res, error.status, error.message);
+        return;
+      }
+      throw error;
+    }
+
     try {
       const summary = await store.addDocument(name, parts);
       res.status(201).json({ document: summary });
@@ -187,7 +237,9 @@ export function createApp(deps: AppDeps): express.Express {
     }
   });
 
-  app.delete('/api/documents/:name', (req, res) => {
+  app.delete('/api/documents/:name', limits.deleteLimiter, (req: Request<{ name: string }>, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+
     const name = req.params.name;
 
     if (protectedDocuments.includes(name)) {
@@ -203,7 +255,7 @@ export function createApp(deps: AppDeps): express.Express {
     res.status(200).json({ removed: name, documents: listDocumentsResponse() });
   });
 
-  app.post('/api/ask', express.json({ limit: '16kb' }), async (req, res) => {
+  app.post('/api/ask', limits.askLimiter, limits.dailyAskCap, express.json({ limit: '16kb' }), async (req, res) => {
     const body: unknown = req.body;
     const question =
       typeof body === 'object' && body !== null && 'question' in body

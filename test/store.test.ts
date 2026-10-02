@@ -147,6 +147,35 @@ test('removeDocument returns false for an unknown document name', () => {
   assert.equal(store.removeDocument('nope'), false);
 });
 
+test('totalChunks counts every chunk across every document', async () => {
+  const store = new VectorStore(bagOfWordsEmbedder());
+  assert.equal(store.totalChunks, 0);
+
+  await store.addDocument('doc-a', [
+    { location: 'p1', text: 'alpha' },
+    { location: 'p2', text: 'bravo' },
+  ]);
+  assert.equal(store.totalChunks, 2);
+
+  await store.addDocument('doc-b', [{ location: 'p1', text: 'charlie' }]);
+  assert.equal(store.totalChunks, 3);
+
+  store.removeDocument('doc-a');
+  assert.equal(store.totalChunks, 1);
+});
+
+test('totalChunks reflects a replace that changes the chunk count', async () => {
+  const store = new VectorStore(bagOfWordsEmbedder());
+  await store.addDocument('doc', [
+    { location: 'p1', text: 'alpha' },
+    { location: 'p2', text: 'bravo' },
+  ]);
+  assert.equal(store.totalChunks, 2);
+
+  await store.addDocument('doc', [{ location: 'p1', text: 'charlie' }]);
+  assert.equal(store.totalChunks, 1);
+});
+
 test('removeDocument updates documentCount', async () => {
   const store = new VectorStore(bagOfWordsEmbedder());
   await store.addDocument('doc-a', [{ location: 'p1', text: 'alpha' }]);
