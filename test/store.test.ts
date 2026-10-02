@@ -123,3 +123,55 @@ test('search defaults k to 5', async () => {
 
   assert.equal(results.length, 5);
 });
+
+test('removeDocument deletes a document, leaves other documents intact, and returns true', async () => {
+  const store = new VectorStore(bagOfWordsEmbedder());
+  await store.addDocument('doc-a', [{ location: 'p1', text: 'alpha bravo' }]);
+  await store.addDocument('doc-b', [{ location: 'p1', text: 'charlie delta' }]);
+
+  const removed = store.removeDocument('doc-a');
+
+  assert.equal(removed, true);
+  assert.deepEqual(store.listDocuments(), [{ name: 'doc-b', chunks: 1 }]);
+
+  const results = await store.search('alpha bravo charlie delta', 10);
+  assert.deepEqual(
+    results.map((result) => result.chunk.source),
+    ['doc-b'],
+  );
+});
+
+test('removeDocument returns false for an unknown document name', () => {
+  const store = new VectorStore(bagOfWordsEmbedder());
+
+  assert.equal(store.removeDocument('nope'), false);
+});
+
+test('removeDocument updates documentCount', async () => {
+  const store = new VectorStore(bagOfWordsEmbedder());
+  await store.addDocument('doc-a', [{ location: 'p1', text: 'alpha' }]);
+  await store.addDocument('doc-b', [{ location: 'p1', text: 'bravo' }]);
+  assert.equal(store.documentCount, 2);
+
+  const removed = store.removeDocument('doc-a');
+
+  assert.equal(removed, true);
+  assert.equal(store.documentCount, 1);
+});
+
+test('removeDocument never lets a later document reuse a removed chunk id', async () => {
+  const store = new VectorStore(bagOfWordsEmbedder());
+  await store.addDocument('doc-a', [
+    { location: 'p1', text: 'alpha' },
+    { location: 'p2', text: 'bravo' },
+  ]);
+
+  store.removeDocument('doc-a');
+  await store.addDocument('doc-b', [{ location: 'p1', text: 'charlie' }]);
+
+  const results = await store.search('charlie', 10);
+  assert.deepEqual(
+    results.map((result) => result.chunk.id),
+    ['c3'],
+  );
+});

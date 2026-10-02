@@ -45,6 +45,7 @@ before(async () => {
   const app = createApp({
     store,
     llm: { complete: (messages) => currentLlm.complete(messages) },
+    protectedDocuments: [FAQ_SOURCE],
     log: () => {
       // Keep test output quiet: these tests intentionally trigger error paths.
     },
@@ -105,8 +106,8 @@ test('uploads a PDF, lists it, and answers a question grounded in it', async () 
   assert.equal(listResponse.status, 200);
   const listBody = await readJson(listResponse);
   assert.deepEqual(listBody.documents, [
-    { name: FAQ_SOURCE, chunks: 7 },
-    { name: 'catering-guide.pdf', chunks: 2 },
+    { name: FAQ_SOURCE, chunks: 7, builtIn: true },
+    { name: 'catering-guide.pdf', chunks: 2, builtIn: false },
   ]);
 
   currentLlm = scriptedLlm((messages) => {
@@ -200,6 +201,66 @@ test('keeps accents in a UTF-8 file name', async () => {
   assert.equal(response.status, 201);
   const body = await readJson(response);
   assert.equal(body.document.name, 'café specials.pdf');
+});
+
+// --- Deleting documents ---------------------------------------------------------
+
+test('DELETE /api/documents/:name removes an uploaded document', async () => {
+  const pdfBytes = await readFile(fixturePath('catering-guide.pdf'));
+  const uploadForm = new FormData();
+  uploadForm.append('file', new Blob([pdfBytes], { type: 'application/pdf' }), 'catering-guide.pdf');
+  const uploadResponse = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body: uploadForm });
+  assert.equal(uploadResponse.status, 201);
+
+  const deleteResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent('catering-guide.pdf')}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(deleteResponse.status, 200);
+  const deleteBody = await readJson(deleteResponse);
+  assert.equal(deleteBody.removed, 'catering-guide.pdf');
+  assert.ok(!deleteBody.documents.some((doc: { name: string }) => doc.name === 'catering-guide.pdf'));
+
+  const listResponse = await fetch(`${baseUrl}/api/documents`);
+  const listBody = await readJson(listResponse);
+  assert.ok(!listBody.documents.some((doc: { name: string }) => doc.name === 'catering-guide.pdf'));
+});
+
+test('DELETE /api/documents/:name deletes a name with spaces and accents via encodeURIComponent', async () => {
+  const pdfBytes = await readFile(fixturePath('catering-guide.pdf'));
+  const uploadForm = new FormData();
+  uploadForm.append('file', new Blob([pdfBytes], { type: 'application/pdf' }), 'café specials.pdf');
+  const uploadResponse = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body: uploadForm });
+  assert.equal(uploadResponse.status, 201);
+
+  const deleteResponse = await fetch(
+    `${baseUrl}/api/documents/${encodeURIComponent('café specials.pdf')}`,
+    { method: 'DELETE' },
+  );
+
+  assert.equal(deleteResponse.status, 200);
+  const deleteBody = await readJson(deleteResponse);
+  assert.equal(deleteBody.removed, 'café specials.pdf');
+});
+
+test('DELETE /api/documents/:name returns 404 for an unknown document', async () => {
+  const response = await fetch(`${baseUrl}/api/documents/${encodeURIComponent('nonexistent.pdf')}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(response.status, 404);
+  const body = await readJson(response);
+  assert.match(body.error, /No document named "nonexistent\.pdf" is loaded/);
+});
+
+test('DELETE /api/documents/:name returns 403 for the built-in FAQ', async () => {
+  const response = await fetch(`${baseUrl}/api/documents/${encodeURIComponent(FAQ_SOURCE)}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(response.status, 403);
+  const body = await readJson(response);
+  assert.deepEqual(body, { error: 'The built-in FAQ cannot be removed.' });
 });
 
 // --- Ask validation ---------------------------------------------------------

@@ -65,7 +65,7 @@ const store = new VectorStore(embedder);
 await addFaqOrExit(store, config);
 
 const llm = createOpenAILlm(config.llm);
-const app = createApp({ store, llm });
+const app = createApp({ store, llm, protectedDocuments: [FAQ_SOURCE] });
 
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(

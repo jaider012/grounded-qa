@@ -56,8 +56,9 @@ ASK
 | Method and path | Body | Success | Errors |
 |---|---|---|---|
 | `POST /api/ask` | `{ "question": "..." }` | `200 { answerable, answer, citations: [{ source, location, quote, passage }], retrieved: [{ source, location, score }] }` | `400` empty, over 500 characters or not JSON; `502` model or embedding failure |
-| `GET /api/documents` | | `200 { documents: [{ name, chunks }] }` | |
+| `GET /api/documents` | | `200 { documents: [{ name, chunks, builtIn }] }` | |
 | `POST /api/documents` | multipart field `file` | `201 { document: { name, chunks } }` | `400` no file; `413` over 10 MB; `415` not a PDF (checked by magic bytes); `422` scanned, encrypted or unreadable; `502` embedding failure |
+| `DELETE /api/documents/:name` | | `200 { removed, documents: [{ name, chunks, builtIn }] }` | `403` built-in FAQ; `404` unknown document name |
 | `GET /healthz` | | `200 { status: "ok", documents }` | |
 
 Every error body is `{ "error": "<what happened and what to do next>" }`.

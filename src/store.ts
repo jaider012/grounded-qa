@@ -129,6 +129,23 @@ export class VectorStore {
     }));
   }
 
+  /**
+   * Removes every chunk belonging to `name` and its entry from
+   * `listDocuments()`. Returns `false` without changing anything when no
+   * such document is loaded. `#nextId` is never rolled back, so removed
+   * chunk ids are never reused by documents added afterwards.
+   */
+  removeDocument(name: string): boolean {
+    if (!this.#documentChunkCounts.has(name)) return false;
+
+    this.#chunks = this.#chunks.filter((chunk) => chunk.source !== name);
+    this.#documentChunkCounts.delete(name);
+    const index = this.#documentOrder.indexOf(name);
+    if (index !== -1) this.#documentOrder.splice(index, 1);
+
+    return true;
+  }
+
   get documentCount(): number {
     return this.#documentOrder.length;
   }

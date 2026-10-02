@@ -12,6 +12,8 @@ import { PdfError, extractPdfPages, isPdf } from './pdf.js';
 export interface AppDeps {
   store: VectorStore;
   llm: Llm;
+  /** Document names that cannot be removed through `DELETE /api/documents/:name` (e.g. the built-in FAQ). */
+  protectedDocuments?: readonly string[];
   log?: (message: string, error?: unknown) => void;
 }
 
@@ -73,7 +75,15 @@ function runMiddleware(
  */
 export function createApp(deps: AppDeps): express.Express {
   const log = deps.log ?? ((message: string, error?: unknown): void => console.error(message, error));
-  const { store, llm } = deps;
+  const { store, llm, protectedDocuments = [] } = deps;
+
+  /** Loaded documents in the `GET`/`DELETE` response shape, flagging names that cannot be removed. */
+  function listDocumentsResponse(): Array<{ name: string; chunks: number; builtIn: boolean }> {
+    return store.listDocuments().map((document) => ({
+      ...document,
+      builtIn: protectedDocuments.includes(document.name),
+    }));
+  }
 
   const app = express();
   app.disable('x-powered-by');
@@ -95,7 +105,7 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   app.get('/api/documents', (_req, res) => {
-    res.status(200).json({ documents: store.listDocuments() });
+    res.status(200).json({ documents: listDocumentsResponse() });
   });
 
   const upload = multer({
@@ -173,6 +183,22 @@ export function createApp(deps: AppDeps): express.Express {
       log('POST /api/documents addDocument failed', error);
       sendError(res, 502, 'The embedding service failed, so the PDF was not added. Try again in a moment.');
     }
+  });
+
+  app.delete('/api/documents/:name', (req, res) => {
+    const name = req.params.name;
+
+    if (protectedDocuments.includes(name)) {
+      sendError(res, 403, 'The built-in FAQ cannot be removed.');
+      return;
+    }
+
+    if (!store.removeDocument(name)) {
+      sendError(res, 404, `No document named "${name}" is loaded. Refresh the list and try again.`);
+      return;
+    }
+
+    res.status(200).json({ removed: name, documents: listDocumentsResponse() });
   });
 
   app.post('/api/ask', express.json({ limit: '16kb' }), async (req, res) => {
