@@ -89,3 +89,55 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ---------------------------------------------------------------------------
+# Security hardening (Brief 3): permissions boundary, Cognito, budget kill
+# switch. See DEPLOY.md "Admin one-time steps" for the manual steps these
+# variables assume have already happened.
+# ---------------------------------------------------------------------------
+
+variable "role_boundary_arn" {
+  description = <<-EOT
+    ARN of the customer managed permissions boundary policy that caps every
+    grounded-qa IAM role (apprunner_ecr_access, apprunner_instance,
+    budget_action). Created ONCE by an administrator from
+    iam-role-boundary.json -- deliberately never by Terraform, so the deploy
+    user (which can only create or modify roles that carry this exact
+    boundary, per iam-deploy-user-policy.json's "StringEquals
+    iam:PermissionsBoundary" condition) can never widen its own reach by
+    editing the boundary itself. See DEPLOY.md, "Admin one-time steps".
+  EOT
+  type        = string
+  default     = "arn:aws:iam::717279723515:policy/grounded-qa-role-boundary"
+}
+
+variable "app_url" {
+  description = <<-EOT
+    Public HTTPS URL of the deployed app (typically this same apply's
+    service_url output, or a custom domain in front of it). Added as a
+    second OAuth callback/logout URL on the Cognito app client, alongside
+    the fixed localhost ones used for local development.
+
+    Left as the default "" on the FIRST apply, before the App Runner service
+    (and therefore its URL) exists -- the Cognito client must not depend on
+    the service that reads the client's own id/secret as environment
+    variables, or `terraform apply` would see a dependency cycle. Once the
+    service exists, run a second apply with
+    `-var "app_url=$(terraform output -raw service_url)"` to add the real
+    callback URL. See DEPLOY.md, "4. Create the rest of the stack".
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "alert_email" {
+  description = <<-EOT
+    Email address subscribed to two notifications: the monthly budget's 80%
+    ACTUAL-spend warning, and the budget action's 100% ACTUAL notification
+    when it automatically denies Bedrock InvokeModel for the App Runner
+    instance role (the "kill switch"). No default on purpose -- every
+    `terraform apply` that touches the budget resources must pass
+    `-var "alert_email=you@example.com"` deliberately.
+  EOT
+  type        = string
+}

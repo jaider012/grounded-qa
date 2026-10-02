@@ -65,7 +65,19 @@ data "aws_iam_policy_document" "apprunner_ecr_access_trust" {
 resource "aws_iam_role" "apprunner_ecr_access" {
   name               = "${var.service_name}-apprunner-ecr-access"
   assume_role_policy = data.aws_iam_policy_document.apprunner_ecr_access_trust.json
-  tags               = var.tags
+
+  # Permissions boundary (Brief 3 security hardening): caps this role's
+  # effective permissions at the intersection of its attached policy and the
+  # boundary, regardless of what the deploy user's IAM policy would otherwise
+  # let it attach later. Verified semantics ("effective permissions are the
+  # intersection... An explicit deny in either policy overrides the allow"):
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_boundaries.html
+  # The boundary (iam-role-boundary.json) allows this role's ECR pull actions
+  # with room to spare, so this does not reduce what AWSAppRunnerServicePolicyForECRAccess
+  # already grants it.
+  permissions_boundary = var.role_boundary_arn
+
+  tags = var.tags
 }
 
 resource "aws_iam_role_policy_attachment" "apprunner_ecr_access" {
@@ -106,7 +118,16 @@ data "aws_iam_policy_document" "apprunner_instance_trust" {
 resource "aws_iam_role" "apprunner_instance" {
   name               = "${var.service_name}-apprunner-instance"
   assume_role_policy = data.aws_iam_policy_document.apprunner_instance_trust.json
-  tags               = var.tags
+
+  # Permissions boundary -- see the identical comment on apprunner_ecr_access
+  # above. This role is also the budget kill switch's target (budget.tf):
+  # the boundary is what still lets the kill switch's Deny policy actually
+  # take effect even though Terraform's own Allow policies below remain
+  # attached -- an explicit Deny anywhere (identity policy or boundary)
+  # always overrides an Allow.
+  permissions_boundary = var.role_boundary_arn
+
+  tags = var.tags
 }
 
 data "aws_iam_policy_document" "bedrock_invoke" {
@@ -126,6 +147,33 @@ resource "aws_iam_role_policy" "apprunner_instance_bedrock" {
   name   = "${var.service_name}-bedrock-invoke"
   role   = aws_iam_role.apprunner_instance.id
   policy = data.aws_iam_policy_document.bedrock_invoke.json
+}
+
+# ---------------------------------------------------------------------------
+# IAM -- lets the running container read the Cognito client secret
+# (cognito.tf) that App Runner injects as the COGNITO_CLIENT_SECRET runtime
+# secret below. ssm:GetParameters (plural) is the exact action AWS's own App
+# Runner docs grant to the instance role for this, and that same page's SSM
+# policy template does NOT include kms:Decrypt -- only its separate Secrets
+# Manager template does. aws_ssm_parameter.cognito_client_secret (cognito.tf)
+# sets no key_id, so it's encrypted with the AWS managed key (alias/aws/ssm),
+# which is the case that needs no extra kms:Decrypt grant:
+#   https://docs.aws.amazon.com/apprunner/latest/dg/env-variable.html
+#   ("Permissions" section, SSM Parameter Store policy template)
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "apprunner_instance_ssm" {
+  statement {
+    sid       = "ReadGroundedQaSsmParameters"
+    actions   = ["ssm:GetParameters"]
+    resources = [aws_ssm_parameter.cognito_client_secret.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "apprunner_instance_ssm" {
+  name   = "${var.service_name}-ssm-secrets"
+  role   = aws_iam_role.apprunner_instance.id
+  policy = data.aws_iam_policy_document.apprunner_instance_ssm.json
 }
 
 # ---------------------------------------------------------------------------
@@ -204,6 +252,32 @@ resource "aws_apprunner_service" "app" {
 
           BEDROCK_CHAT_MODEL_ID      = var.bedrock_chat_model_id
           BEDROCK_EMBEDDING_MODEL_ID = var.bedrock_embedding_model_id
+
+          # Brief 3 security hardening -- Cognito-backed auth (cognito.tf).
+          # AUTH_MODE=cognito makes the app fail closed on missing/invalid
+          # session cookies instead of allowing anonymous access.
+          AUTH_MODE            = "cognito"
+          COGNITO_USER_POOL_ID = aws_cognito_user_pool.main.id
+          COGNITO_CLIENT_ID    = aws_cognito_user_pool_client.app.id
+          COGNITO_DOMAIN       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
+
+          # App Runner terminates TLS and proxies plain HTTP to the
+          # container over exactly one hop, so Express's "trust proxy" must
+          # trust exactly 1 hop to read X-Forwarded-* (client IP, proto)
+          # correctly without trusting a spoofable header from the client
+          # itself.
+          TRUST_PROXY_HOPS = "1"
+        }
+
+        # Secrets (as opposed to the plain-text runtime_environment_variables
+        # above): App Runner resolves these from SSM Parameter Store at
+        # deployment time using the instance role's ssm:GetParameters grant
+        # above, and never shows the value in the console or logs. Argument
+        # verified at:
+        #   https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/apprunner_service
+        #   ("runtime_environment_secrets" under the image_configuration block)
+        runtime_environment_secrets = {
+          COGNITO_CLIENT_SECRET = aws_ssm_parameter.cognito_client_secret.arn
         }
       }
     }

@@ -158,7 +158,7 @@ cd infra && terraform init                                   # 1. once
 terraform apply -target=aws_ecr_repository.app               # 2. the ECR repository first
 REPO="$(terraform output -raw ecr_repository_url)"           # 3. build for linux/amd64 and push
 aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
-docker buildx build --platform linux/amd64 -t "$REPO:latest" --push ..
+docker buildx build --platform linux/amd64 -t "${REPO}:latest" --push ..   # braces matter in zsh: $REPO:l is a modifier
 terraform apply                                              # 4. roles, single-instance scaling, the service
 terraform output -raw service_url                            # 5. the live URL
 ```

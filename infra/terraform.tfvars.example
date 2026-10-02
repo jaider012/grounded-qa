@@ -15,6 +15,18 @@ bedrock_chat_model_id          = "deepseek.v3.2"
 bedrock_chat_fallback_model_id = "amazon.nova-lite-v1:0"
 bedrock_embedding_model_id     = "amazon.titan-embed-text-v2:0"
 
+# No default on purpose (variables.tf) -- every apply that touches the budget
+# resources names a real notification address deliberately. Replace this
+# before running `terraform apply`.
+alert_email = "you@example.com"
+
+# Leave unset ("") until the App Runner service exists, then set it to
+# $(terraform output -raw service_url) for a second apply -- see DEPLOY.md,
+# "4b. Second apply: add the real OAuth callback URL". Setting it before the
+# service exists does nothing useful; setting it to the service's own output
+# in the SAME apply that creates the service is a dependency cycle.
+# app_url = ""
+
 tags = {
   project = "grounded-qa"
 }

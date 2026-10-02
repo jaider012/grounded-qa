@@ -14,9 +14,12 @@ aws sts get-caller-identity --query Account --output text   # must print 7172797
 The profile holds static keys of a dedicated IAM user, `grounded-qa-deploy`, in account
 717279723515. Its policy, `infra/iam-deploy-user-policy.json`, allows only what this
 project needs: invoking the three Bedrock models, read-only model discovery, the
-`grounded-qa` ECR repository, App Runner in this account, managing roles named
-`grounded-qa-*` (and passing them to App Runner), reading the service's logs and the
-`grounded-qa-monthly` budget.
+`grounded-qa` ECR repository, App Runner in this account, the `grounded-qa` Cognito user
+pool, the `grounded-qa-monthly` budget and its kill switch action, SSM parameters under
+`/grounded-qa/*`, reading the service's logs, and managing roles named `grounded-qa-*` --
+but only roles that carry a specific permissions boundary the deploy user cannot itself
+create or widen, so it can never escalate itself to admin through a role it creates. See
+"Admin one-time steps" below for why, and for the boundary policy this all depends on.
 
 Create it once from CloudShell (signed in as an administrator), after pasting the policy
 file into CloudShell as `deploy-policy.json`:
@@ -38,6 +41,78 @@ key with `aws iam delete-access-key` and create a new one):
 ```bash
 aws configure --profile grounded-qa   # access key, secret key, region us-east-1, output json
 ```
+
+## Admin one-time steps (CloudShell)
+
+Brief 3 found that the original `iam-deploy-user-policy.json` let the deploy user escalate
+to admin (create a role, attach any policy to it, then pass that role to a service it
+controls -- `AdministratorAccess` included). It's fixed with a **permissions boundary**: a
+second policy, created once by an administrator and never by Terraform, that caps the
+*maximum* permissions any `grounded-qa-*` role can ever have, no matter what the deploy
+user later attaches to it. The deploy user's own policy is also rewritten to only be able to
+create/modify `grounded-qa-*` roles that already carry this exact boundary (see
+`iam-deploy-user-policy.json`'s `CreateGroundedQaRolesWithBoundary` / `AttachAllowlistedPolicyToBoundedRoles`
+statements) -- it can no longer attach an arbitrary policy or escalate itself.
+
+The deploy user's key was also pasted into chat during that investigation and must be
+treated as leaked. Do all of this from CloudShell, signed in as an administrator (setting
+this project up from scratch rather than fixing a leak in place? skip step 1 and the
+`aws iam create-user`/`create-access-key` calls from "0." above, and just do steps 2-4 in
+order, since step 4's checks assume the role-boundary policy from step 2 already exists):
+
+```bash
+# 1. Deactivate the leaked key, create a replacement. List first to get its ID:
+aws iam list-access-keys --user-name grounded-qa-deploy
+aws iam update-access-key --user-name grounded-qa-deploy --status Inactive \
+  --access-key-id <the-leaked-key-id>
+aws iam create-access-key --user-name grounded-qa-deploy \
+  --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text
+# Type the two new values into the prompts below -- never paste them anywhere else
+# (chat, a ticket, a file committed to the repo):
+aws configure --profile grounded-qa
+# Once the new profile works end to end, delete the deactivated key for good:
+aws iam delete-access-key --user-name grounded-qa-deploy --access-key-id <the-leaked-key-id>
+
+# 2. Create the permissions boundary (paste infra/iam-role-boundary.json into
+# CloudShell as role-boundary.json first):
+aws iam create-policy --policy-name grounded-qa-role-boundary \
+  --policy-document file://role-boundary.json
+
+# 3. Replace the deploy user's policy with the hardened version (paste
+# infra/iam-deploy-user-policy.json into CloudShell as deploy-policy.json first).
+# Customer managed policies keep at most 5 versions -- if this one already has 5,
+# delete the oldest NON-DEFAULT version before creating a new one:
+aws iam list-policy-versions --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-deploy
+# (only if the command above already lists 5 versions, delete the oldest non-default one)
+aws iam delete-policy-version --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-deploy \
+  --version-id <oldest-non-default-version-id>
+aws iam create-policy-version --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-deploy \
+  --policy-document file://deploy-policy.json --set-as-default
+
+# 4. Verify the fix actually closes the escalation path AND still lets App Runner
+# work, before trying a real `terraform apply`:
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::717279723515:user/grounded-qa-deploy \
+  --action-names iam:PassRole \
+  --resource-arns arn:aws:iam::717279723515:role/grounded-qa-apprunner-instance
+# EvalDecision must be "allowed" -- this is the exact call that was AccessDenied before.
+
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::717279723515:user/grounded-qa-deploy \
+  --action-names iam:AttachRolePolicy \
+  --resource-arns arn:aws:iam::717279723515:role/grounded-qa-apprunner-instance \
+  --context-entries \
+    ContextKeyName=iam:PolicyARN,ContextKeyType=string,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess \
+    ContextKeyName=iam:PermissionsBoundary,ContextKeyType=string,ContextKeyValues=arn:aws:iam::717279723515:policy/grounded-qa-role-boundary
+# EvalDecision must be "implicitDeny" or "explicitDeny" -- confirms the deploy
+# user can no longer attach AdministratorAccess (or anything else off the
+# allow-listed policy ARNs) to a grounded-qa role, even on a role that already
+# carries the boundary (the one condition that IS satisfied here).
+```
+
+(`simulate-principal-policy` is read-only against IAM's policy evaluation logic -- it does
+not require or consume any of the deploy user's own permissions, and does not change
+anything. Reference: <https://docs.aws.amazon.com/cli/latest/reference/iam/simulate-principal-policy.html>.)
 
 ## Before you start: App Runner's new-customer cutoff
 
@@ -93,14 +168,66 @@ cd infra
 
 ## 4. Create the rest of the stack
 
+This apply needs `alert_email` -- it has no default on purpose (variables.tf), so every
+apply that touches the budget resources names a real notification address deliberately.
+`app_url` is deliberately left at its default (`""`) here: the App Runner service doesn't
+exist yet, so there is no real URL for the Cognito app client's second OAuth callback (see
+variables.tf for why the client can't just reference the service's own output -- that would
+be a dependency cycle).
+
 ```bash
-terraform apply
+terraform apply -var "alert_email=<your-email>"
 ```
 
-This creates the IAM roles, the auto scaling configuration (pinned to exactly 1 instance),
-and the App Runner service itself, pointed at the `:latest` image you just pushed.
+This creates the IAM roles (each capped by the permissions boundary from "Admin one-time
+steps" above), the Cognito user pool and app client, the SSM parameter holding the client
+secret, the monthly budget and its kill switch action, the auto scaling configuration
+(pinned to exactly 1 instance), and the App Runner service itself, pointed at the `:latest`
+image you just pushed.
+
+### 4b. Second apply: add the real OAuth callback URL
+
+Now that the service exists, point the Cognito app client's callback/logout URLs at its real
+URL too. The fixed `http://localhost:3000/...` ones from the first apply keep working for
+local development either way:
+
+```bash
+terraform apply -var "alert_email=<your-email>" \
+  -var "app_url=$(terraform output -raw service_url)"
+```
+
+## Create users
+
+`AUTH_MODE=cognito` means there is no public sign-up page -- every account is created by an
+administrator:
+
+```bash
+aws cognito-idp admin-create-user --profile "$AWS_PROFILE" \
+  --user-pool-id "$(terraform output -raw cognito_user_pool_id)" \
+  --user-attributes Name=email,Value=<user-email> Name=email_verified,Value=true \
+  --desired-delivery-mediums EMAIL
+```
+
+Cognito emails the new user a temporary password; the 12-character/upper/lower/number/symbol
+policy applies when they set a real one on first sign-in. To let that user upload and delete
+documents (everyone else gets read-only access to `/api/ask`), add them to the `admins`
+group:
+
+```bash
+aws cognito-idp admin-add-user-to-group --profile "$AWS_PROFILE" \
+  --user-pool-id "$(terraform output -raw cognito_user_pool_id)" \
+  --username <user-email> \
+  --group-name admins
+```
 
 ## 5. Smoke test
+
+`/healthz` stays anonymous (App Runner's own health checker can't sign in), but `/api/ask`
+now requires a signed-in session -- sign in through the Cognito hosted login first
+(`https://$(terraform output -raw cognito_domain)/login?...`, see "Create users" above for
+getting an account), then re-run these against the resulting session cookie. A plain,
+unauthenticated `curl -X POST .../api/ask` is expected to come back `401` now, not a FAQ
+answer:
 
 ```bash
 SERVICE_URL="$(terraform output -raw service_url)"
@@ -116,8 +243,8 @@ curl -s -X POST "$SERVICE_URL/api/ask" \
   -d '{"question":"Do you have parking?"}'
 ```
 
-The first question should come back grounded in the built-in FAQ; the second should come
-back as a refusal (the FAQ has no parking information), not a fabricated answer.
+Signed in, the first question should come back grounded in the built-in FAQ; the second
+should come back as a refusal (the FAQ has no parking information), not a fabricated answer.
 
 **Known limitation:** this service is pinned to exactly one instance because its vector
 store lives in memory, but App Runner's own documented scaling behavior still applies:
@@ -129,59 +256,67 @@ survive a deploy, and requests may transiently land on either instance during th
 This is inherent to App Runner, not something this Terraform config can turn off.
 (Source: <https://docs.aws.amazon.com/apprunner/latest/api/API_AutoScalingConfiguration.html>)
 
-## 6. Cost alert (optional, do this before you forget)
+## 6. Cost alert and kill switch (Terraform-managed, created in step 4)
 
-One `aws budgets create-budget` call, with the notification/subscriber in a second file
-(verified CLI shape: <https://docs.aws.amazon.com/cli/latest/reference/budgets/create-budget.html>):
+No separate manual step needed anymore -- `aws_budgets_budget.monthly` and
+`aws_budgets_budget_action.kill_switch` (budget.tf) are part of the same `terraform apply`
+as everything else, created with the `alert_email` you passed in step 4:
+
+- At 80% of $10 actual spend in a calendar month (i.e. $8), `alert_email` gets a warning.
+- At 100%, AWS Budgets automatically attaches `grounded-qa-bedrock-kill-switch` (a Deny on
+  `bedrock:InvokeModel`/`InvokeModelWithResponseStream`) to the App Runner instance role --
+  the app stays up (App Runner, ECR, etc. keep running) but every Bedrock call starts
+  failing -- and `alert_email` gets notified that it fired.
+
+**This is a backstop, not a real-time guard**: AWS Budgets refreshes actual spend a few
+times a day, not per-request, so the in-app daily ask cap (see the main README) is what
+actually limits damage within a day; the kill switch only catches a leak that the daily cap
+didn't.
+
+**Recovery is manual by design**: once you understand what caused the overage, detach the
+policy yourself --
 
 ```bash
-ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text --profile "$AWS_PROFILE")"
-
-cat > /tmp/grounded-qa-budget.json <<'EOF'
-{
-  "BudgetName": "grounded-qa-monthly",
-  "BudgetType": "COST",
-  "TimeUnit": "MONTHLY",
-  "BudgetLimit": { "Amount": "10", "Unit": "USD" }
-}
-EOF
-
-cat > /tmp/grounded-qa-budget-notifications.json <<'EOF'
-[
-  {
-    "Notification": {
-      "NotificationType": "ACTUAL",
-      "ComparisonOperator": "GREATER_THAN",
-      "Threshold": 80,
-      "ThresholdType": "PERCENTAGE"
-    },
-    "Subscribers": [
-      { "SubscriptionType": "EMAIL", "Address": "<your-email>" }
-    ]
-  }
-]
-EOF
-
-aws budgets create-budget --profile "$AWS_PROFILE" \
-  --account-id "$ACCOUNT_ID" \
-  --budget file:///tmp/grounded-qa-budget.json \
-  --notifications-with-subscribers file:///tmp/grounded-qa-budget-notifications.json
+aws iam detach-role-policy --profile "$AWS_PROFILE" \
+  --role-name grounded-qa-apprunner-instance \
+  --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-bedrock-kill-switch
 ```
 
-This alerts by email once actual spend passes 80% of $10 (i.e. $8) in a calendar month.
+Nothing re-attaches it automatically until the budget action fires again next month.
+
+**Optional extra not implemented here:** AWS WAF in front of the App Runner service (rate
+limiting and managed rule groups at the edge, on top of the app's own per-user/IP limits).
+Left out because of its cost relative to this project's scale: $5/month per Web ACL + $1/month
+per rule + $0.60 per million requests (<https://aws.amazon.com/waf/pricing/>), i.e. a
+double-digit-dollar monthly floor against a stack that otherwise costs about $5-6/month (see
+cost estimate below).
 
 ## 7. Teardown
 
 ```bash
-terraform destroy
+terraform destroy -var "alert_email=<your-email>"
+```
 
-# If you created the budget above:
-aws budgets delete-budget --profile "$AWS_PROFILE" \
-  --account-id "$ACCOUNT_ID" --budget-name "grounded-qa-monthly"
+Since Brief 3, this also removes everything Terraform now manages: the Cognito user pool
+(and every user in it -- **there is no recovery once a user pool is deleted**), its domain
+and app client, the SSM parameter holding the client secret, the monthly budget, and the
+kill switch action and its dedicated role. `-var "alert_email=..."` has to match what you
+applied with (any value works for a destroy, Terraform just needs the variable to be set at
+all) unless you saved it in `terraform.tfvars`.
+
+The permissions boundary (`grounded-qa-role-boundary`) is **not** removed by this -- it was
+created once by an administrator outside Terraform (see "Admin one-time steps") specifically
+so the deploy user could never delete or widen it, and it stays attached to nothing once the
+roles are gone. Delete it by hand only if you are done with the project for good:
+
+```bash
+aws iam delete-policy --profile "$AWS_PROFILE" \
+  --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-role-boundary
 ```
 
 `force_delete = true` on the ECR repository means `terraform destroy` removes it even with
-images still pushed, so this is the only command needed to tear down the deployed stack.
+images still pushed, so the `terraform destroy` above is the only command needed to tear
+down the deployed stack itself.
 
 To also remove the deploy user once you are done with the project (from CloudShell, as an
 administrator):
@@ -249,6 +384,23 @@ call and ~50 input tokens for the question's embedding:
 - So roughly **0.2 cents per question asked** -- for ~100 test questions in a month, about
   $0.18.
 
-**Total, mostly-idle with light testing: roughly $5.25-5.40/month**, with the App Runner
-memory floor (~$5.11) as the dominant, traffic-independent cost. ECR and Bedrock add low
-single-digit cents at this usage level.
+**Cognito (Essentials tier)** -- the default tier for new user pools, and the one this stack
+uses; free for the first 10,000 monthly active users per account, then $0.015/MAU above
+that (source: <https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-sign-in-feature-plans.html>,
+<https://aws.amazon.com/cognito/pricing/>). This project's handful of admin-created accounts
+stays inside the free tier: **$0/month**.
+
+**SSM Parameter Store** -- the Cognito client secret is a `Standard` tier parameter (the
+default, no `tier` set), which is free with no additional charge for standard-throughput API
+calls (source: <https://aws.amazon.com/systems-manager/pricing/>): **$0/month**.
+
+**AWS Budgets action** -- the first two action-enabled budgets per account are free
+regardless of how many actions are configured on them; a third and beyond cost $0.10/day
+each (~$3/month) (source: <https://aws.amazon.com/aws-cost-management/aws-budgets/pricing>).
+If `grounded-qa-monthly` is this account's first or second action-enabled budget: **$0/month**;
+otherwise budget for the ~$3/month per-budget charge.
+
+**Total, mostly-idle with light testing: roughly $5.25-5.40/month**, unchanged by Brief 3's
+Cognito/SSM/budget-action additions at this usage level (all three are $0 in the common
+case above) -- the App Runner memory floor (~$5.11) remains the dominant, traffic-independent
+cost. ECR and Bedrock add low single-digit cents on top.

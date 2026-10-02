@@ -47,20 +47,48 @@
       "Resource": "*"
     },
     {
-      "Sid": "ManageOnlyGroundedQaRoles",
+      "Sid": "CreateGroundedQaRolesWithBoundary",
       "Effect": "Allow",
       "Action": [
         "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:PutRolePermissionsBoundary"
+      ],
+      "Resource": "arn:aws:iam::717279723515:role/grounded-qa-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::717279723515:policy/grounded-qa-role-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "AttachAllowlistedPolicyToBoundedRoles",
+      "Effect": "Allow",
+      "Action": "iam:AttachRolePolicy",
+      "Resource": "arn:aws:iam::717279723515:role/grounded-qa-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::717279723515:policy/grounded-qa-role-boundary"
+        },
+        "ArnEquals": {
+          "iam:PolicyARN": [
+            "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess",
+            "arn:aws:iam::717279723515:policy/grounded-qa-bedrock-kill-switch"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeleteTagGroundedQaRoles",
+      "Effect": "Allow",
+      "Action": [
         "iam:DeleteRole",
         "iam:GetRole",
         "iam:TagRole",
         "iam:UntagRole",
-        "iam:UpdateAssumeRolePolicy",
-        "iam:PutRolePolicy",
         "iam:GetRolePolicy",
         "iam:DeleteRolePolicy",
         "iam:ListRolePolicies",
-        "iam:AttachRolePolicy",
         "iam:DetachRolePolicy",
         "iam:ListAttachedRolePolicies",
         "iam:ListInstanceProfilesForRole"
@@ -68,19 +96,45 @@
       "Resource": "arn:aws:iam::717279723515:role/grounded-qa-*"
     },
     {
-      "Sid": "PassGroundedQaRolesToAppRunner",
+      "Sid": "DenyRemovingRoleBoundary",
+      "Effect": "Deny",
+      "Action": "iam:DeleteRolePermissionsBoundary",
+      "Resource": "arn:aws:iam::717279723515:role/grounded-qa-*"
+    },
+    {
+      "Sid": "DenyEditingBoundaryOrOwnPolicy",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreatePolicyVersion",
+        "iam:SetDefaultPolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion"
+      ],
+      "Resource": [
+        "arn:aws:iam::717279723515:policy/grounded-qa-role-boundary",
+        "arn:aws:iam::717279723515:policy/grounded-qa-deploy"
+      ]
+    },
+    {
+      "Sid": "ManageOnlyKillSwitchPolicy",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreatePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:TagPolicy"
+      ],
+      "Resource": "arn:aws:iam::717279723515:policy/grounded-qa-bedrock-kill-switch"
+    },
+    {
+      "Sid": "PassGroundedQaRoles",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::717279723515:role/grounded-qa-*",
-      "Condition": {
-        "StringEquals": {
-          "iam:PassedToService": [
-            "apprunner.amazonaws.com",
-            "build.apprunner.amazonaws.com",
-            "tasks.apprunner.amazonaws.com"
-          ]
-        }
-      }
+      "Resource": "arn:aws:iam::717279723515:role/grounded-qa-*"
     },
     {
       "Sid": "AppRunnerServiceLinkedRole",
@@ -88,7 +142,9 @@
       "Action": "iam:CreateServiceLinkedRole",
       "Resource": "arn:aws:iam::717279723515:role/aws-service-role/apprunner.amazonaws.com/AWSServiceRoleForAppRunner",
       "Condition": {
-        "StringLike": { "iam:AWSServiceName": "apprunner.amazonaws.com" }
+        "StringLike": {
+          "iam:AWSServiceName": "apprunner.amazonaws.com"
+        }
       }
     },
     {
@@ -103,13 +159,38 @@
       "Resource": "arn:aws:logs:us-east-1:717279723515:log-group:/aws/apprunner/grounded-qa/*"
     },
     {
-      "Sid": "MonthlyBudget",
+      "Sid": "MonthlyBudgetAndKillSwitchAction",
       "Effect": "Allow",
       "Action": [
         "budgets:ViewBudget",
-        "budgets:ModifyBudget"
+        "budgets:ModifyBudget",
+        "budgets:CreateBudgetAction",
+        "budgets:DescribeBudgetAction",
+        "budgets:DescribeBudgetActionsForBudget",
+        "budgets:UpdateBudgetAction",
+        "budgets:DeleteBudgetAction"
       ],
       "Resource": "arn:aws:budgets::717279723515:budget/grounded-qa-monthly"
+    },
+    {
+      "Sid": "ManageGroundedQaCognito",
+      "Effect": "Allow",
+      "Action": "cognito-idp:*",
+      "Resource": "arn:aws:cognito-idp:us-east-1:717279723515:userpool/*"
+    },
+    {
+      "Sid": "ManageGroundedQaSsmParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource",
+        "ssm:RemoveTagsFromResource",
+        "ssm:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:ssm:us-east-1:717279723515:parameter/grounded-qa/*"
     }
   ]
 }

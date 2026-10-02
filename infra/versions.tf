@@ -14,6 +14,13 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.60.0, < 7.0.0"
     }
+
+    # Only used for the Cognito domain prefix's random suffix (cognito.tf) --
+    # domain prefixes must be globally unique across all AWS accounts.
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.5.0, < 4.0.0"
+    }
   }
 }
 
