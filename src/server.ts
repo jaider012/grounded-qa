@@ -3,7 +3,9 @@ import type { Config } from './config.js';
 import { assertModelAvailable, createLlm, listModels } from './llm.js';
 import { createEmbedder } from './embeddings.js';
 import { VectorStore } from './store.js';
+import type { ChunkInput } from './chunking.js';
 import { FAQ_SOURCE, faqChunks } from './faq.js';
+import { CATERING_SOURCE, cateringChunks } from './catering.js';
 import { createApp } from './app.js';
 import { loadRuntimeDeps } from './bootstrap.js';
 import type { RuntimeDeps } from './bootstrap.js';
@@ -59,15 +61,20 @@ function assertModelAvailableOrExit(
   }
 }
 
-async function addFaqOrExit(store: VectorStore, config: Config): Promise<void> {
+async function addBuiltInOrExit(
+  store: VectorStore,
+  config: Config,
+  name: string,
+  chunks: ChunkInput[],
+): Promise<void> {
   try {
-    await store.addDocument(FAQ_SOURCE, faqChunks());
+    await store.addDocument(name, chunks);
   } catch (error) {
     const detail =
       config.provider === 'openai-compatible'
         ? `with EMBEDDING_MODEL "${config.embedding.model}" at ${config.embedding.baseURL}`
         : `with BEDROCK_EMBEDDING_MODEL_ID "${config.bedrock.embeddingModelId}" in ${config.bedrock.region}`;
-    console.error(`Could not embed the built-in FAQ ${detail}: ${reasonOf(error)}`);
+    console.error(`Could not embed the built-in document "${name}" ${detail}: ${reasonOf(error)}`);
     process.exit(1);
   }
 }
@@ -89,13 +96,14 @@ if (config.provider === 'openai-compatible') {
 
 const embedder = createEmbedder(config);
 const store = new VectorStore(embedder);
-await addFaqOrExit(store, config);
+await addBuiltInOrExit(store, config, FAQ_SOURCE, faqChunks());
+await addBuiltInOrExit(store, config, CATERING_SOURCE, cateringChunks());
 
 const llm = createLlm(config);
 const app = createApp({
   store,
   llm,
-  protectedDocuments: [FAQ_SOURCE],
+  protectedDocuments: [FAQ_SOURCE, CATERING_SOURCE],
   provider: config.provider,
   auth: runtimeDeps.auth,
   limits: runtimeDeps.limits,
