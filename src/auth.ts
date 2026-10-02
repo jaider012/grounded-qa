@@ -207,8 +207,12 @@ function buildCognitoRouter(settings: RuntimeSettings): Router {
     }
 
     if (req.path.startsWith('/api') && MUTATING_METHODS.has(req.method)) {
+      // Fails closed: a browser always sends Origin on a cross-site or
+      // same-site fetch/XHR/form POST, so a missing Origin here is not a
+      // normal browser request and must be blocked exactly like a wrong
+      // one, not silently allowed through.
       const origin = req.headers.origin;
-      if (typeof origin === 'string' && origin !== originOf(req)) {
+      if (typeof origin !== 'string' || origin !== originOf(req)) {
         res.status(403).json({ error: 'Cross-site request blocked.' });
         return;
       }

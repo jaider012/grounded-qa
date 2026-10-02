@@ -5,6 +5,8 @@ import { createEmbedder } from './embeddings.js';
 import { VectorStore } from './store.js';
 import { FAQ_SOURCE, faqChunks } from './faq.js';
 import { createApp } from './app.js';
+import { loadRuntimeDeps } from './bootstrap.js';
+import type { RuntimeDeps } from './bootstrap.js';
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -13,6 +15,18 @@ function reasonOf(error: unknown): string {
 function loadConfigOrExit(): Config {
   try {
     return loadConfig(process.env);
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
+}
+
+function loadRuntimeDepsOrExit(): RuntimeDeps {
+  try {
+    return loadRuntimeDeps(process.env);
   } catch (error) {
     if (error instanceof ConfigError) {
       console.error(error.message);
@@ -60,6 +74,8 @@ async function addFaqOrExit(store: VectorStore, config: Config): Promise<void> {
 
 loadDotEnv();
 const config = loadConfigOrExit();
+const runtimeDeps = loadRuntimeDepsOrExit();
+console.log(`Auth mode: ${runtimeDeps.auth.mode}`);
 
 if (config.provider === 'openai-compatible') {
   const availableModels = await listModelsOrExit(config.llm);
@@ -76,7 +92,15 @@ const store = new VectorStore(embedder);
 await addFaqOrExit(store, config);
 
 const llm = createLlm(config);
-const app = createApp({ store, llm, protectedDocuments: [FAQ_SOURCE], provider: config.provider });
+const app = createApp({
+  store,
+  llm,
+  protectedDocuments: [FAQ_SOURCE],
+  provider: config.provider,
+  auth: runtimeDeps.auth,
+  limits: runtimeDeps.limits,
+  trustProxyHops: runtimeDeps.trustProxyHops,
+});
 
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(

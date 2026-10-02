@@ -27,6 +27,13 @@ export interface AppDeps {
   auth?: Auth;
   /** Defaults to the safe limits in `DEFAULT_LIMITS` when absent. */
   limits?: Limits;
+  /**
+   * Number of reverse-proxy hops to trust for `X-Forwarded-*` headers (e.g.
+   * App Runner sets 1). Defaults to 0: no proxy is trusted, so `req.ip` and
+   * `req.protocol` report the direct socket, matching the app's behavior
+   * before this option existed.
+   */
+  trustProxyHops?: number;
   /** Testing seam, forwarded to `extractPdfPages`: overrides the pdf.js text-extraction call. */
   pdfExtractTextImpl?: ExtractPdfOptions['extractTextImpl'];
 }
@@ -111,6 +118,13 @@ export function createApp(deps: AppDeps): express.Express {
   }
 
   const app = express();
+
+  // Must run before any middleware that reads req.ip/req.protocol (the auth
+  // Origin check, the rate limiters): it decides whether X-Forwarded-* is
+  // trusted at all. Defaulting to 0 keeps the pre-existing behavior (no
+  // proxy trusted) when the deploy target does not set TRUST_PROXY_HOPS.
+  app.set('trust proxy', deps.trustProxyHops ?? 0);
+
   app.disable('x-powered-by');
 
   app.use((_req, res, next) => {

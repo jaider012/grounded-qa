@@ -236,12 +236,17 @@ curl -sf "$SERVICE_URL/healthz"
 
 curl -s -X POST "$SERVICE_URL/api/ask" \
   -H "Content-Type: application/json" \
+  -H "Origin: $SERVICE_URL" \
   -d '{"question":"Are you open on Mondays?"}'
 
 curl -s -X POST "$SERVICE_URL/api/ask" \
   -H "Content-Type: application/json" \
+  -H "Origin: $SERVICE_URL" \
   -d '{"question":"Do you have parking?"}'
 ```
+
+`POST /api/ask` is a mutating request, so once signed in it also needs a matching `Origin`
+header: a missing or cross-site `Origin` is rejected with `403` exactly the same way.
 
 Signed in, the first question should come back grounded in the built-in FAQ; the second
 should come back as a refusal (the FAQ has no parking information), not a fabricated answer.

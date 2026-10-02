@@ -418,7 +418,7 @@ test('a signed-in non-admin gets 403 on POST /api/documents and DELETE /api/docu
   try {
     const uploadResponse = await fetch(`${baseUrl}/api/documents`, {
       method: 'POST',
-      headers: { cookie: sessionCookieHeader('user-token') },
+      headers: { cookie: sessionCookieHeader('user-token'), origin: baseUrl },
       body: new FormData(),
     });
     assert.equal(uploadResponse.status, 403);
@@ -426,7 +426,7 @@ test('a signed-in non-admin gets 403 on POST /api/documents and DELETE /api/docu
 
     const deleteResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent('x.pdf')}`, {
       method: 'DELETE',
-      headers: { cookie: sessionCookieHeader('user-token') },
+      headers: { cookie: sessionCookieHeader('user-token'), origin: baseUrl },
     });
     assert.equal(deleteResponse.status, 403);
   } finally {
@@ -444,14 +444,14 @@ test('a signed-in admin can upload and delete documents', async () => {
 
     const uploadResponse = await fetch(`${baseUrl}/api/documents`, {
       method: 'POST',
-      headers: { cookie: sessionCookieHeader('admin-token') },
+      headers: { cookie: sessionCookieHeader('admin-token'), origin: baseUrl },
       body: form,
     });
     assert.equal(uploadResponse.status, 201);
 
     const deleteResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent('catering-guide.pdf')}`, {
       method: 'DELETE',
-      headers: { cookie: sessionCookieHeader('admin-token') },
+      headers: { cookie: sessionCookieHeader('admin-token'), origin: baseUrl },
     });
     assert.equal(deleteResponse.status, 200);
   } finally {
@@ -491,7 +491,7 @@ test('a same-site Origin on a mutating /api request is allowed through', async (
   }
 });
 
-test('a missing Origin on a mutating /api request is allowed through', async () => {
+test('a missing Origin on a mutating /api request is blocked with 403 (fails closed, not open)', async () => {
   const app = buildAuthApp({ verifierMap: { 'admin-token': { sub: 'admin-1', groups: ['admins'] } } });
   const { server, baseUrl } = await listen(app);
   try {
@@ -499,7 +499,32 @@ test('a missing Origin on a mutating /api request is allowed through', async () 
       method: 'DELETE',
       headers: { cookie: sessionCookieHeader('admin-token') },
     });
-    assert.equal(response.status, 404);
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'Cross-site request blocked.' });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('a missing Origin on a GET /api request is allowed through (the Origin check only applies to mutating methods)', async () => {
+  const app = buildAuthApp({ verifierMap: { 'admin-token': { sub: 'admin-1', groups: ['admins'] } } });
+  const { server, baseUrl } = await listen(app);
+  try {
+    const response = await fetch(`${baseUrl}/api/documents`, {
+      headers: { cookie: sessionCookieHeader('admin-token') },
+    });
+    assert.equal(response.status, 200);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('an unauthenticated mutating /api request with no Origin gets 401, not 403 (the auth check runs first)', async () => {
+  const app = buildAuthApp();
+  const { server, baseUrl } = await listen(app);
+  try {
+    const response = await fetch(`${baseUrl}/api/documents/${encodeURIComponent('x.pdf')}`, { method: 'DELETE' });
+    assert.equal(response.status, 401);
   } finally {
     await closeServer(server);
   }
