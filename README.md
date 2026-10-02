@@ -226,21 +226,20 @@ URL="$(terraform -chdir=infra output -raw service_url)"
 curl -s "$URL/healthz"
 # {"status":"ok","documents":1,"provider":"bedrock"}
 
-curl -s -X POST "$URL/api/ask" -H 'Content-Type: application/json' \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL/api/ask" -H 'Content-Type: application/json' \
   -d '{"question":"Are you open on Mondays?"}'
-# "answerable":true, an answer saying no, and a citation at location "Hours"
-
-curl -s -X POST "$URL/api/ask" -H 'Content-Type: application/json' \
-  -d '{"question":"Do you have parking?"}'
-# {"answerable":false,"answer":"I can't answer that from the loaded documents.","citations":[],...}
+# 401: AUTH_MODE=cognito, so questions need a signed-in session
 ```
+
+Signed in through the Cognito hosted login, "Are you open on Mondays?" comes back answerable with a citation at location "Hours", and "Do you have parking?" comes back as the fixed refusal. The signed-in commands (session cookie plus a matching `Origin` header) are in `infra/DEPLOY.md`, step 5.
 
 ## Known limits
 
 - **The store is lost on restart.** Uploaded PDFs disappear on every deploy or restart. During a deploy App Runner briefly runs the old and the new instance side by side, each with its own in-memory store.
 - **The check proves the quote, not the answer.** Example from local testing: asked "Can I book a table for 4 people?", Gemma answered "Yes" while citing the true sentence "Parties of 5 or fewer are seated on a walk-in basis."
 - **No OCR.** Scanned PDFs are rejected with a message asking for OCR first.
-- **No auth or rate limiting.** Anyone with the URL can upload files and spend model tokens.
+- **Limits live in memory.** Rate limits and the daily ask cap reset when the process restarts, and App Runner briefly runs two instances during a deploy, each with its own counters.
+- **The PDF parse timeout does not stop the parser.** A timed-out upload is rejected, but the parse keeps using CPU until it finishes.
 - **Retrieval is embeddings only.** Questions in other languages retrieve less precisely with the local English embedding model.
 - **The refusal is English only.**
 
