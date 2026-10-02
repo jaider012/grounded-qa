@@ -89,6 +89,15 @@ Out of scope: auth, persistence, streaming, deploying or pushing (the user runs 
 - [x] T9 Dark app redesign (user's choice via question: near-black, mint accent, left sidebar, answers newest first, refusal card replaces 86) + delete button UI. Route: delegated writer (public/ and test/ui/ only), parallel with T8 on disjoint files. `test:ui` 12/12. Parent polish: no focus ring on the script-focused card question, document name on its own line, full-width sidebar on phones (`align-self: stretch`), dark favicon. Live check against LM Studio at 390x844 and 1440x900: real answer with highlighted Reservations quote, no console errors, no horizontal overflow; rendered detector 0 findings at both sizes. Commit `7bbc55a`, pushed.
 - [x] Process records moved into the repo at the user's request: `odd/tasks/grounded-qa.md`, `odd/specs/grounded-qa-brief.md`, `.impeccable/`, `PRODUCT.md`, `DESIGN.md` (regenerated for the dark world).
 
+## Brief 2: AI providers and AWS deploy (approved 2026-10-01)
+
+Plan approved by the user; container choice: App Runner (caveat: closed to new customers since 2026-04-30, verify with read-only checks once personal credentials exist; fallback ECS Express Mode). The NativApps QA AWS account must never be used for this project (user: "Nada de native apps").
+
+- [x] T10 `PROVIDER` switch (openai-compatible | bedrock): config fail-fast per provider, Bedrock Converse llm, Titan v2 embedder (concurrency 5, throttling retry x3), clear AWS error messages, `provider` in healthz, remove DeepSeek direct / OpenAI / LLM_JSON_MODE / LLM_EXTRA_BODY. Route: delegated writer. RED/GREEN per module (bedrock-error 5, config 8, llm 25, embeddings 12, api 20); `npm test` 164/164, typecheck and build clean, lockfile keys normal. Replaced tests: json_object / LLM_EXTRA_BODY tests in config and llm (features removed by the brief). Commit `4b27d4c`.
+- [x] T11 Deploy infra: Terraform for ECR + App Runner (1 instance, 0.25 vCPU / 1 GB, linux/amd64 image) + IAM roles, least-privilege Bedrock policy JSON, DEPLOY.md with exact commands, budget command and teardown. Route: delegated writer (infra/ only), parallel with T10. `terraform validate` passed (hashicorp/aws 6.67.0). Parent added the `grounded-qa-deploy` user policy and the profile setup (user asked for the alegra-style static-key profile).
+- [x] T12 README sections from the brief (LM Studio, Bedrock, model access, AWS access, deploy, IAM policy, smoke test, cost, 10 USD budget, teardown); LocalStack notes removed at the user's request. Route: inline.
+- [x] T13 Evals: LM Studio (gemma-4-e4b + nomic) 13/13; Bedrock (deepseek.v3.2 + Titan v2, account 717279723515, temporary root CloudShell credentials) 11/13, partial 0/2 because DeepSeek returns answerable:false for partially covered questions (raw output checked; prompt left unchanged per the brief).
+
 ## Pending (user-owned)
 
 - DeepSeek/OpenAI eval run (needs keys in `.env`).

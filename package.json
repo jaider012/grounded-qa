@@ -14,7 +14,9 @@
     "test": "tsx --test test/*.test.ts",
     "test:ui": "tsx --test test/ui/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "eval": "tsx scripts/eval.ts"
+    "eval": "tsx scripts/eval.ts",
+    "dev:bedrock": "PROVIDER=bedrock AWS_PROFILE=${AWS_PROFILE:-grounded-qa} AWS_REGION=${AWS_REGION:-us-east-1} BEDROCK_CHAT_MODEL_ID=${BEDROCK_CHAT_MODEL_ID:-deepseek.v3.2} BEDROCK_EMBEDDING_MODEL_ID=${BEDROCK_EMBEDDING_MODEL_ID:-amazon.titan-embed-text-v2:0} tsx watch src/server.ts",
+    "eval:bedrock": "PROVIDER=bedrock AWS_PROFILE=${AWS_PROFILE:-grounded-qa} AWS_REGION=${AWS_REGION:-us-east-1} BEDROCK_CHAT_MODEL_ID=${BEDROCK_CHAT_MODEL_ID:-deepseek.v3.2} BEDROCK_EMBEDDING_MODEL_ID=${BEDROCK_EMBEDDING_MODEL_ID:-amazon.titan-embed-text-v2:0} tsx scripts/eval.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1145.0",
