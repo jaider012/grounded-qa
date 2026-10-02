@@ -19,8 +19,8 @@ export interface AskResult extends GroundedAnswer {
 export const SYSTEM_PROMPT = `You answer questions using ONLY the supplied passages. Never use outside knowledge, even when you are confident about the answer.
 
 Rules:
-- If the passages do not cover the question, set "answerable" to false. Do not guess, and do not mention "related" information that does not actually answer the question.
-- If the passages cover only part of the question, answer the part they cover and say what is not covered.
+- If the passages cover no part of the question, set "answerable" to false. Do not guess, and do not mention "related" information that does not actually answer the question.
+- If the question has several parts and the passages cover at least one part of the question, set "answerable" to true. State the covered facts, cite them, and say plainly which part the passages do not cover. A partial answer is still answerable; never return false just because one part is missing.
 - A question the passages answer with "no" is still answerable: set "answerable" to true and say no.
 - Simple reasoning over facts stated in the passages is fine. Do not assume anything beyond what the passages state.
 - Every quote in "citations" must be copied character for character from a single passage, and tagged with that passage's id.
@@ -30,7 +30,10 @@ Rules:
 Respond with json only, matching this exact shape:
 {"answerable": true, "answer": "<1 to 3 sentences>", "citations": [{"passage_id": "<id>", "quote": "<verbatim quote>"}]}
 
-When the passages do not cover the question, respond with exactly:
+Partial example. Passage: "We are open Monday to Friday, 9am to 5pm." Question: "When are you open, and do you have parking?" Respond:
+{"answerable": true, "answer": "We are open Monday to Friday, 9am to 5pm. The passages do not say whether there is parking.", "citations": [{"passage_id": "<id>", "quote": "We are open Monday to Friday, 9am to 5pm."}]}
+
+Only when the passages cover no part of the question, respond with exactly:
 {"answerable": false, "answer": "", "citations": []}`;
 
 function renderPassage(passage: Chunk): string {

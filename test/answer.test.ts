@@ -32,6 +32,15 @@ test('SYSTEM_PROMPT mentions json', () => {
   assert.match(SYSTEM_PROMPT, /json/);
 });
 
+test('SYSTEM_PROMPT makes partial coverage answerable and keeps the full-refusal case', () => {
+  assert.match(SYSTEM_PROMPT, /at least one part of the question/);
+  assert.match(SYSTEM_PROMPT, /"answerable" to true/);
+  assert.match(SYSTEM_PROMPT, /partial/i);
+  // The refusal line must be limited to questions with NO covered part.
+  assert.match(SYSTEM_PROMPT, /respond with exactly[\s\S]*\{"answerable": false/);
+  assert.match(SYSTEM_PROMPT, /no part of the question/i);
+});
+
 // --- buildMessages -----------------------------------------------------------
 
 test('buildMessages renders every passage id, source, location, and the question', async () => {
