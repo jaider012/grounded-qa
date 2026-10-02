@@ -5,6 +5,7 @@ import { assertModelAvailable, createLlm, listModels } from '../src/llm.js';
 import { createEmbedder } from '../src/embeddings.js';
 import { VectorStore } from '../src/store.js';
 import { FAQ_SOURCE, faqChunks } from '../src/faq.js';
+import { CATERING_SOURCE, cateringChunks } from '../src/catering.js';
 import { answerQuestion } from '../src/answer.js';
 import type { CaseScore, GoldenCase } from './eval-score.js';
 import { parseGolden, scoreCase, summarize } from './eval-score.js';
@@ -45,6 +46,7 @@ if (config.provider === 'openai-compatible') {
 const embedder = createEmbedder(config);
 const store = new VectorStore(embedder);
 await store.addDocument(FAQ_SOURCE, faqChunks());
+await store.addDocument(CATERING_SOURCE, cateringChunks());
 
 const llm = createLlm(config);
 

@@ -1,6 +1,6 @@
 # Grounded Q&A
 
-Ask a question and get an answer that comes **only** from the loaded documents: a built-in FAQ for Bonaire Bites plus any PDF you upload. Every answer cites the document, the page or section, and a verbatim quote that plain code has checked against the passage. If the documents do not cover the question, the app says so instead of guessing.
+Ask a question and get an answer that comes **only** from the loaded documents: two built-in Bonaire Bites sources (the FAQ and the Catering Menu) plus any PDF you upload. Every answer cites the document, the page or section, and a verbatim quote that plain code has checked against the passage. If the documents do not cover the question, the app says so instead of guessing.
 
 ## Run locally with LM Studio (free, the default)
 
@@ -14,7 +14,7 @@ Ask a question and get an answer that comes **only** from the loaded documents: 
    ```bash
    npm run dev
    ```
-4. Open http://localhost:3000. The startup log lists the models LM Studio offers and ends with `listening on http://0.0.0.0:3000 (1 document(s) loaded)`.
+4. Open http://localhost:3000. The startup log lists the models LM Studio offers and ends with `listening on http://0.0.0.0:3000 (2 document(s) loaded)`.
 
 Node.js 22 or newer is required.
 
@@ -40,8 +40,9 @@ There is nothing to request for these two models. Amazon Bedrock enables access 
 ## How it works
 
 ```
-INGEST (built-in FAQ at startup, each PDF on upload)
+INGEST (built-in FAQ and Catering Menu at startup, each PDF on upload)
   FAQ ─────────────────► one chunk per section ──────────────┐
+  Catering Menu ───────► one chunk per section ──────────────┤
   PDF ─► unpdf, per page ─► clean ─► sentence chunks ─────────┤  ~900 chars, 1-sentence overlap,
                                                                │  never across a page
                                                                ▼
@@ -59,6 +60,7 @@ ASK
 |---|---|
 | `src/config.ts` | Reads and validates the provider variables; fails fast naming every missing one |
 | `src/faq.ts` | The built-in FAQ, one section per chunk |
+| `src/catering.ts` | The built-in Bonaire Bites Catering Menu, one section per chunk |
 | `src/chunking.ts` | PDF text cleaning and sentence packing |
 | `src/pdf.ts` | Per-page text extraction with `unpdf`; scanned, encrypted and unreadable PDFs become typed errors |
 | `src/embeddings.ts` | `Embedder` interface; LM Studio (OpenAI-compatible) and Bedrock Titan v2 implementations |
