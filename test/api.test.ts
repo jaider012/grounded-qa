@@ -193,13 +193,13 @@ test('rejects an upload with no file attached with 400', async () => {
 test('keeps accents in a UTF-8 file name', async () => {
   const pdfBytes = await readFile(fixturePath('catering-guide.pdf'));
   const form = new FormData();
-  form.append('file', new Blob([pdfBytes], { type: 'application/pdf' }), 'menú del día.pdf');
+  form.append('file', new Blob([pdfBytes], { type: 'application/pdf' }), 'café specials.pdf');
 
   const response = await fetch(`${baseUrl}/api/documents`, { method: 'POST', body: form });
 
   assert.equal(response.status, 201);
   const body = await readJson(response);
-  assert.equal(body.document.name, 'menú del día.pdf');
+  assert.equal(body.document.name, 'café specials.pdf');
 });
 
 // --- Ask validation ---------------------------------------------------------
