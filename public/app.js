@@ -21,6 +21,11 @@ const documentList = document.getElementById('document-list');
 const addPdfButton = document.getElementById('add-pdf-button');
 const pdfInput = document.getElementById('pdf-input');
 const uploadStatus = document.getElementById('upload-status');
+const accountBlock = document.getElementById('account-block');
+const adminNote = document.getElementById('admin-note');
+
+/** Set by `applyAuthState` once `/api/me` resolves; read by `buildDocumentItem`. */
+let isAdmin = true;
 
 function clearChildren(node) {
   while (node.firstChild) {
@@ -30,6 +35,77 @@ function clearChildren(node) {
 
 function pluralize(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+// --- Sign-in-aware UI: /api/me, 401 handling, the account block and the admin note ---
+
+/**
+ * Wraps `fetch`, redirecting to the sign-in page on a 401 (no session, or an
+ * expired one) instead of letting the caller treat it as an ordinary error.
+ * Returns null once it has redirected; callers should stop and return.
+ */
+async function apiFetch(url, options) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    window.location.assign('/auth/login');
+    return null;
+  }
+  return response;
+}
+
+/**
+ * Fetches the signed-in user. A 404 (no /api/me route) or a network error
+ * means an older, auth-less backend, so the page falls back to today's
+ * behavior: a local admin user and no account block.
+ */
+async function loadMe() {
+  try {
+    const response = await fetch('/api/me');
+    if (response.status === 401) {
+      window.location.assign('/auth/login');
+      return null;
+    }
+    if (!response.ok) {
+      return { email: 'local', isAdmin: true, authMode: 'none' };
+    }
+    return await response.json();
+  } catch {
+    return { email: 'local', isAdmin: true, authMode: 'none' };
+  }
+}
+
+function renderAccountBlock(email) {
+  clearChildren(accountBlock);
+
+  const status = document.createElement('p');
+  status.className = 'account-status';
+  status.textContent = `Signed in as ${email}`;
+  accountBlock.appendChild(status);
+
+  const signOut = document.createElement('a');
+  signOut.className = 'account-signout';
+  signOut.href = '/auth/logout';
+  signOut.textContent = 'Sign out';
+  accountBlock.appendChild(signOut);
+}
+
+/**
+ * Applies the result of `loadMe()`: the account block for a Cognito session
+ * (none for an auth-less backend), and hides admin-only controls for a
+ * signed-in non-admin. The server enforces the restriction either way; this
+ * only reflects it.
+ */
+function applyAuthState(me) {
+  isAdmin = me.isAdmin;
+
+  if (me.authMode === 'cognito') {
+    renderAccountBlock(me.email);
+  }
+
+  if (!isAdmin) {
+    addPdfButton.hidden = true;
+    adminNote.textContent = 'Only administrators can add or remove documents.';
+  }
 }
 
 function createSvgElement(tag, attributes) {
@@ -300,11 +376,13 @@ async function askQuestion(question) {
   updateEmptyHint();
 
   try {
-    const response = await fetch('/api/ask', {
+    const response = await apiFetch('/api/ask', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ question }),
     });
+    if (!response) return;
+
     const body = await response.json().catch(() => null);
     skeleton.remove();
 
@@ -342,7 +420,8 @@ function updateCharCounter() {
 
 async function removeDocument(name, onFailureReset) {
   try {
-    const response = await fetch(`/api/documents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const response = await apiFetch(`/api/documents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!response) return;
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
@@ -426,7 +505,7 @@ function buildDocumentItem(doc) {
     badge.className = 'builtin-badge';
     badge.textContent = 'Built-in';
     item.appendChild(badge);
-  } else {
+  } else if (isAdmin) {
     item.appendChild(buildRemoveButton(doc.name));
   }
 
@@ -442,8 +521,8 @@ function renderDocuments(documents) {
 
 async function loadDocuments() {
   try {
-    const response = await fetch('/api/documents');
-    if (!response.ok) return;
+    const response = await apiFetch('/api/documents');
+    if (!response || !response.ok) return;
     const body = await response.json();
     renderDocuments(Array.isArray(body.documents) ? body.documents : []);
   } catch {
@@ -458,7 +537,8 @@ async function uploadPdf(file) {
   formData.append('file', file);
 
   try {
-    const response = await fetch('/api/documents', { method: 'POST', body: formData });
+    const response = await apiFetch('/api/documents', { method: 'POST', body: formData });
+    if (!response) return;
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
@@ -508,6 +588,13 @@ pdfInput.addEventListener('change', () => {
   if (file) uploadPdf(file);
 });
 
-updateEmptyHint();
-updateCharCounter();
-loadDocuments();
+async function init() {
+  const me = await loadMe();
+  if (me === null) return; // redirecting to /auth/login
+  applyAuthState(me);
+  updateEmptyHint();
+  updateCharCounter();
+  await loadDocuments();
+}
+
+init();

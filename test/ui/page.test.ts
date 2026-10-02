@@ -79,20 +79,7 @@ before(async () => {
   // screenshot captures deterministic (a resize-to-full-height capture can
   // otherwise race a still-running CSS animation).
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  page.on('console', (msg: ConsoleMessage) => {
-    // Chrome itself logs a "Failed to load resource" console error for every
-    // non-2xx fetch response, independent of how gracefully the page handles
-    // it. Several scenarios below deliberately provoke a 502/415/404 to
-    // verify the page surfaces those errors correctly, so that expected
-    // noise is filtered out here; a real CSP violation or app-thrown error
-    // logs under different wording and still fails this check.
-    if (msg.type() === 'error' && !/^Failed to load resource:/.test(msg.text())) {
-      consoleErrors.push(msg.text());
-    }
-  });
-  page.on('pageerror', (error) => {
-    pageErrors.push(String(error));
-  });
+  trackConsoleErrors(page);
 
   if (SAVE_SCREENSHOTS) {
     await mkdir(SCREENSHOT_DIR, { recursive: true });
@@ -110,10 +97,47 @@ after(async () => {
   });
 });
 
-async function askViaTextarea(question: string): Promise<void> {
-  const textarea = page.locator('textarea');
+async function askViaTextarea(target: Page, question: string): Promise<void> {
+  const textarea = target.locator('textarea');
   await textarea.fill(question);
   await textarea.press('Enter');
+}
+
+function trackConsoleErrors(target: Page): void {
+  target.on('console', (msg: ConsoleMessage) => {
+    // Chrome itself logs a "Failed to load resource" console error for every
+    // non-2xx fetch response, independent of how gracefully the page handles
+    // it; several scenarios across this file deliberately provoke one, so
+    // that expected noise is filtered out here. A real CSP violation or
+    // app-thrown error logs under different wording and still fails this
+    // check.
+    if (msg.type() === 'error' && !/^Failed to load resource:/.test(msg.text())) {
+      consoleErrors.push(msg.text());
+    }
+  });
+  target.on('pageerror', (error) => {
+    pageErrors.push(String(error));
+  });
+}
+
+/** A fresh page for a test that mocks its own routes, isolated from the shared `page`'s state. */
+async function newPage(): Promise<Page> {
+  const fresh = await browser.newPage({ viewport: DEFAULT_VIEWPORT });
+  await fresh.emulateMedia({ reducedMotion: 'reduce' });
+  trackConsoleErrors(fresh);
+  return fresh;
+}
+
+/** Fulfils `/auth/login` with a tiny stub page, so a redirect there never hits the real (non-existent) route. */
+async function stubLoginPage(target: Page): Promise<void> {
+  await target.route('**/auth/login', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Sign in</title>' }),
+  );
+}
+
+function jsonRoute(status: number, body: unknown) {
+  return (route: Parameters<Parameters<Page['route']>[1]>[0]) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
 /**
@@ -151,6 +175,12 @@ test('initial load shows the wordmark, five example chips, and the document list
   const documentsText = (await page.locator('.documents').textContent()) ?? '';
   assert.ok(documentsText.includes(FAQ_SOURCE));
   assert.ok(documentsText.includes('7'));
+
+  // This test's `createApp` has no auth configured, so /api/me 404s and the
+  // fallback applies: authMode 'none' (no account block) and admin (today's
+  // behavior, unchanged for an older/auth-less backend).
+  assert.equal(((await page.locator('#account-block').textContent()) ?? '').trim(), '');
+  assert.equal(await page.locator('#add-pdf-button').isVisible(), true);
 });
 
 test('the built-in FAQ has no remove button and shows a Built-in badge', async () => {
@@ -177,7 +207,7 @@ test('asking a question renders a card with the answer and a verified citation',
     });
   });
 
-  await askViaTextarea('When are you closed?');
+  await askViaTextarea(page, 'When are you closed?');
   await waitForAnswerCard('When are you closed?');
 
   const card = page.locator('.answer-card').first();
@@ -201,12 +231,12 @@ test('asking a question renders a card with the answer and a verified citation',
     // page) so the screenshot reflects a fresh layout at that exact size, the way
     // a visitor loading the page at that width would actually see it.
     await page.setViewportSize(DESKTOP_VIEWPORT);
-    await askViaTextarea('When are you closed?');
+    await askViaTextarea(page, 'When are you closed?');
     await waitForAnswerCard('When are you closed?');
     await page.screenshot({ path: `${SCREENSHOT_DIR}desktop.png`, fullPage: true });
 
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await askViaTextarea('When are you closed?');
+    await askViaTextarea(page, 'When are you closed?');
     await waitForAnswerCard('When are you closed?');
     await page.screenshot({ path: `${SCREENSHOT_DIR}mobile.png`, fullPage: true });
 
@@ -219,9 +249,9 @@ test('answers stack newest first', async () => {
     JSON.stringify({ answerable: false, answer: '', citations: [] }),
   );
 
-  await askViaTextarea('Is there vegan food at Playa Lechi?');
+  await askViaTextarea(page, 'Is there vegan food at Playa Lechi?');
   await waitForAnswerCard('Is there vegan food at Playa Lechi?');
-  await askViaTextarea('Can I reserve a table for 4 people?');
+  await askViaTextarea(page, 'Can I reserve a table for 4 people?');
   await waitForAnswerCard('Can I reserve a table for 4 people?');
 
   const cards = page.locator('.answer-card');
@@ -282,7 +312,7 @@ test('a refusal shows the calm "Not in the documents" state with the API text', 
 test('a model failure shows the API error message in an alert', async () => {
   currentLlm = scriptedLlm(() => 'not json');
 
-  await askViaTextarea('Are you open on Mondays?');
+  await askViaTextarea(page, 'Are you open on Mondays?');
 
   const alert = page.locator('[role="alert"]');
   await alert.waitFor({ state: 'visible' });
@@ -334,6 +364,97 @@ test('removing a document: click, confirm, disappears, and the status reports it
     .locator('[role="status"]', { hasText: 'Removed catering-guide.pdf.' })
     .waitFor({ state: 'visible' });
   assert.equal(await page.locator('.document-item', { hasText: 'catering-guide.pdf' }).count(), 0);
+});
+
+// --- Sign-in-aware UI (mocked /api/me via page.route, decoupled from the backend) ---
+
+test('a non-admin sees no upload button or remove buttons, and sees the admin note', async () => {
+  const fresh = await newPage();
+  try {
+    await fresh.route('**/api/me', jsonRoute(200, { email: 'viewer@example.com', isAdmin: false, authMode: 'cognito' }));
+    await fresh.goto(`${baseUrl}/`);
+
+    await fresh.locator('#admin-note').waitFor({ state: 'visible' });
+    assert.match(
+      ((await fresh.locator('#admin-note').textContent()) ?? '').trim(),
+      /Only administrators can add or remove documents\./,
+    );
+    assert.equal(await fresh.locator('#add-pdf-button').isVisible(), false);
+    assert.equal(await fresh.locator('.document-remove').count(), 0);
+  } finally {
+    await fresh.close();
+  }
+});
+
+test('a cognito admin sees a signed-in account block with a sign-out link', async () => {
+  const fresh = await newPage();
+  try {
+    await fresh.route('**/api/me', jsonRoute(200, { email: 'admin@example.com', isAdmin: true, authMode: 'cognito' }));
+    await fresh.goto(`${baseUrl}/`);
+
+    const accountBlock = fresh.locator('#account-block');
+    await accountBlock.waitFor({ state: 'visible' });
+    const accountText = (await accountBlock.textContent()) ?? '';
+    assert.match(accountText, /Signed in as admin@example\.com/);
+
+    const signOut = fresh.locator('#account-block a');
+    assert.equal((await signOut.textContent())?.trim(), 'Sign out');
+    assert.equal(await signOut.getAttribute('href'), '/auth/logout');
+
+    // Not gated by this test, but confirms the fallback didn't also suppress admin controls.
+    assert.equal(await fresh.locator('#add-pdf-button').isVisible(), true);
+  } finally {
+    await fresh.close();
+  }
+});
+
+test('a 401 from /api/me redirects to /auth/login', async () => {
+  const fresh = await newPage();
+  try {
+    await fresh.route('**/api/me', jsonRoute(401, { error: 'Sign in to continue.' }));
+    await stubLoginPage(fresh);
+
+    await fresh.goto(`${baseUrl}/`);
+    await fresh.waitForURL('**/auth/login');
+    assert.ok(fresh.url().endsWith('/auth/login'), `Expected to land on /auth/login, got ${fresh.url()}`);
+  } finally {
+    await fresh.close();
+  }
+});
+
+test('a mocked 429 from /api/ask shows its message in the alert', async () => {
+  const fresh = await newPage();
+  try {
+    await fresh.route(
+      '**/api/ask',
+      jsonRoute(429, { error: 'Too many questions today. Try again tomorrow.' }),
+    );
+    await fresh.goto(`${baseUrl}/`);
+
+    await askViaTextarea(fresh, 'When are you closed?');
+
+    const alert = fresh.locator('[role="alert"]');
+    await alert.waitFor({ state: 'visible' });
+    assert.match((await alert.textContent()) ?? '', /Too many questions today\. Try again tomorrow\./);
+  } finally {
+    await fresh.close();
+  }
+});
+
+test('a mocked 401 from /api/ask redirects to /auth/login', async () => {
+  const fresh = await newPage();
+  try {
+    await fresh.route('**/api/ask', jsonRoute(401, { error: 'Sign in to continue.' }));
+    await stubLoginPage(fresh);
+    await fresh.goto(`${baseUrl}/`);
+
+    await askViaTextarea(fresh, 'When are you closed?');
+
+    await fresh.waitForURL('**/auth/login');
+    assert.ok(fresh.url().endsWith('/auth/login'), `Expected to land on /auth/login, got ${fresh.url()}`);
+  } finally {
+    await fresh.close();
+  }
 });
 
 // --- Hygiene --------------------------------------------------------------------

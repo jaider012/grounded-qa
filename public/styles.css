@@ -347,6 +347,51 @@ mark {
   display: none;
 }
 
+.admin-note {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.admin-note:empty {
+  display: none;
+}
+
+/* --- Account block: pinned to the bottom of the sidebar ---------------------- */
+
+.account-block {
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.account-block:empty {
+  display: none;
+  border-top: none;
+  padding-top: 0;
+}
+
+.account-status {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.account-signout {
+  align-self: flex-start;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.account-signout:hover {
+  color: var(--color-text-secondary);
+}
+
 /* --- Ask bar (command-bar style) -------------------------------------------- */
 
 .ask-form {
