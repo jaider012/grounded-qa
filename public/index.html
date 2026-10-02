@@ -8,16 +8,30 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="site-header">
-    <h1>Grounded Q&amp;A</h1>
-    <p class="site-tagline">
-      Answers come only from the documents on the shelf — the built-in FAQ and any PDFs added below —
-      and every answer shows exactly where it came from.
-    </p>
-  </header>
+  <div class="app">
+    <div class="sidebar">
+      <header class="sidebar-header">
+        <h1 class="wordmark">Grounded Q&amp;A</h1>
+        <p class="sidebar-tagline">Answers come only from these documents.</p>
+      </header>
 
-  <div class="layout">
-    <main class="pass">
+      <section class="documents" aria-labelledby="documents-heading">
+        <h2 id="documents-heading">Documents</h2>
+        <ul id="document-list" class="document-list"></ul>
+        <button type="button" id="add-pdf-button" class="add-pdf-button">Add a PDF</button>
+        <input
+          type="file"
+          id="pdf-input"
+          class="visually-hidden"
+          tabindex="-1"
+          accept="application/pdf,.pdf"
+          aria-label="Choose a PDF file to add"
+        />
+        <p id="upload-status" class="upload-status" role="status"></p>
+      </section>
+    </div>
+
+    <main class="main">
       <section class="ask" aria-labelledby="ask-heading">
         <h2 id="ask-heading" class="visually-hidden">Ask a question</h2>
 
@@ -49,41 +63,8 @@
         </ul>
       </section>
 
-      <section class="rail" aria-label="Current ticket" aria-live="polite" aria-atomic="true">
-        <div class="rail-bar" aria-hidden="true"></div>
-        <div class="ticket-slot"></div>
-      </section>
-
-      <details class="retrieved-details">
-        <summary>Retrieved passages (0)</summary>
-        <table class="retrieved-table">
-          <thead>
-            <tr>
-              <th scope="col">Rank</th>
-              <th scope="col">Source</th>
-              <th scope="col">Location</th>
-              <th scope="col">Score</th>
-            </tr>
-          </thead>
-          <tbody id="retrieved-body"></tbody>
-        </table>
-      </details>
+      <section id="answers" class="answers" aria-label="Answers" aria-live="polite"></section>
     </main>
-
-    <aside class="shelf" aria-labelledby="shelf-heading">
-      <h2 id="shelf-heading">Documents</h2>
-      <button type="button" id="add-pdf-button" class="add-pdf-button">Add a PDF</button>
-      <input
-        type="file"
-        id="pdf-input"
-        class="visually-hidden"
-        tabindex="-1"
-        accept="application/pdf,.pdf"
-        aria-label="Choose a PDF file to add to the shelf"
-      />
-      <p id="upload-status" class="upload-status" role="status"></p>
-      <ul id="document-list" class="document-list"></ul>
-    </aside>
   </div>
 
   <script type="module" src="/app.js"></script>

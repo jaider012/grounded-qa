@@ -2,32 +2,25 @@
 // Every DOM node that can carry untrusted text (answers, citations, passages,
 // uploaded file names) is built with createElement + textContent/createTextNode
 // only. No HTML-string injection API is used anywhere in this file, since
-// PDF text is untrusted.
+// PDF text is untrusted. Icons are small inline SVGs built through
+// createElementNS, never markup strings.
 
 const MAX_QUESTION_CHARS = 500;
 const CHAR_COUNTER_THRESHOLD = 80;
+const CONFIRM_WINDOW_MS = 4000;
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const form = document.getElementById('ask-form');
 const textarea = document.getElementById('question-input');
 const charCounter = document.getElementById('char-counter');
 const askButton = document.getElementById('ask-button');
 const askError = document.getElementById('ask-error');
-const rail = document.querySelector('.rail');
-const ticketSlot = document.querySelector('.ticket-slot');
+const answersSection = document.getElementById('answers');
 const exampleButtons = document.querySelectorAll('.example-question');
-const detailsSummary = document.querySelector('.retrieved-details summary');
-const retrievedBody = document.getElementById('retrieved-body');
 const documentList = document.getElementById('document-list');
 const addPdfButton = document.getElementById('add-pdf-button');
 const pdfInput = document.getElementById('pdf-input');
 const uploadStatus = document.getElementById('upload-status');
-
-/** Formats a Date as 24-hour "HH:MM", for the ticket's order strip. */
-function formatTime(date) {
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
 
 function clearChildren(node) {
   while (node.firstChild) {
@@ -37,6 +30,68 @@ function clearChildren(node) {
 
 function pluralize(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+function createSvgElement(tag, attributes) {
+  const element = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attributes)) {
+    element.setAttribute(key, value);
+  }
+  return element;
+}
+
+/** A small "x" used on the remove-document button. Single stroke weight, currentColor. */
+function buildRemoveIcon() {
+  const svg = createSvgElement('svg', { viewBox: '0 0 16 16', width: '14', height: '14', 'aria-hidden': 'true' });
+  svg.appendChild(
+    createSvgElement('line', {
+      x1: '4',
+      y1: '4',
+      x2: '12',
+      y2: '12',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linecap': 'round',
+    }),
+  );
+  svg.appendChild(
+    createSvgElement('line', {
+      x1: '12',
+      y1: '4',
+      x2: '4',
+      y2: '12',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linecap': 'round',
+    }),
+  );
+  return svg;
+}
+
+/** A calm "nothing here" glyph (circle + dash) for the refusal state. Single stroke weight. */
+function buildRefusalIcon() {
+  const svg = createSvgElement('svg', {
+    class: 'refusal-icon',
+    viewBox: '0 0 24 24',
+    width: '28',
+    height: '28',
+    'aria-hidden': 'true',
+  });
+  svg.appendChild(
+    createSvgElement('circle', { cx: '12', cy: '12', r: '9', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5' }),
+  );
+  svg.appendChild(
+    createSvgElement('line', {
+      x1: '8',
+      y1: '12',
+      x2: '16',
+      y2: '12',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linecap': 'round',
+    }),
+  );
+  return svg;
 }
 
 /**
@@ -63,133 +118,30 @@ function appendHighlightedPassage(container, passage, quote) {
   }
 }
 
-function buildRule() {
-  const rule = document.createElement('div');
-  rule.className = 'ticket-rule';
-  rule.setAttribute('aria-hidden', 'true');
-  return rule;
-}
+/** The collapsed "Retrieved passages (N)" details with its fixed-column table, built fresh per card. */
+function buildRetrievedDetails(retrieved) {
+  const details = document.createElement('details');
+  details.className = 'retrieved-details';
 
-/** The blank ticket shown before any question has been asked, and after a failed request. */
-function buildEmptyTicket() {
-  const ticket = document.createElement('div');
-  ticket.className = 'ticket ticket--empty';
+  const summary = document.createElement('summary');
+  summary.textContent = `Retrieved passages (${retrieved.length})`;
+  details.appendChild(summary);
 
-  const strip = document.createElement('div');
-  strip.className = 'ticket-strip ticket-strip--empty';
-  strip.setAttribute('aria-hidden', 'true');
-  ticket.appendChild(strip);
+  const table = document.createElement('table');
+  table.className = 'retrieved-table';
 
-  const message = document.createElement('p');
-  message.className = 'ticket-empty-message';
-  message.textContent =
-    'Ask a question above, try an example, or add a PDF. Answers come only from the documents on the shelf.';
-  ticket.appendChild(message);
-
-  return ticket;
-}
-
-/** A decorative loading placeholder, not announced (the live region announces the real ticket once it lands). */
-function buildSkeletonTicket() {
-  const ticket = document.createElement('div');
-  ticket.className = 'ticket ticket--loading';
-  ticket.setAttribute('aria-hidden', 'true');
-
-  for (const modifier of ['strip', 'question', 'answer', 'answer-short']) {
-    const line = document.createElement('div');
-    line.className = `skeleton-line skeleton-line--${modifier}`;
-    ticket.appendChild(line);
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const label of ['Rank', 'Source', 'Location', 'Score']) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = label;
+    headRow.appendChild(th);
   }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
 
-  return ticket;
-}
-
-/** Builds the real ticket for an /api/ask result: an answer ticket, or an 86-stamped refusal. */
-function buildTicket(question, result) {
-  const ticket = document.createElement('div');
-  ticket.className = result.answerable ? 'ticket' : 'ticket ticket--refused';
-
-  const strip = document.createElement('div');
-  strip.className = 'ticket-strip';
-  const stripTime = document.createElement('span');
-  stripTime.className = 'ticket-strip-time';
-  stripTime.textContent = formatTime(new Date());
-  const stripLabel = document.createElement('span');
-  stripLabel.className = 'ticket-strip-label';
-  stripLabel.textContent = 'Order';
-  strip.appendChild(stripTime);
-  strip.appendChild(stripLabel);
-  ticket.appendChild(strip);
-
-  const heading = document.createElement('h2');
-  heading.className = 'ticket-heading visually-hidden';
-  heading.id = 'ticket-heading';
-  heading.tabIndex = -1;
-  heading.textContent = result.answerable ? 'Order answered' : 'Order refused, stamped 86';
-  ticket.appendChild(heading);
-
-  const questionLine = document.createElement('p');
-  questionLine.className = 'ticket-question';
-  questionLine.textContent = question;
-  ticket.appendChild(questionLine);
-
-  ticket.appendChild(buildRule());
-
-  if (!result.answerable) {
-    const stamp = document.createElement('div');
-    stamp.className = 'ticket-stamp';
-    stamp.textContent = '86';
-    ticket.appendChild(stamp);
-  }
-
-  const answerLine = document.createElement('p');
-  answerLine.className = 'ticket-answer';
-  answerLine.textContent = result.answer;
-  ticket.appendChild(answerLine);
-
-  if (!result.answerable) {
-    const hint = document.createElement('p');
-    hint.className = 'ticket-refusal-hint';
-    hint.textContent = 'Nothing in the loaded documents covers this question.';
-    ticket.appendChild(hint);
-  }
-
-  if (Array.isArray(result.citations) && result.citations.length > 0) {
-    ticket.appendChild(buildRule());
-    const list = document.createElement('ul');
-    list.className = 'ticket-citations';
-    for (const citation of result.citations) {
-      const item = document.createElement('li');
-      item.className = 'ticket-citation';
-
-      const head = document.createElement('p');
-      head.className = 'ticket-citation-head';
-      head.textContent = `${citation.source} · ${citation.location}`;
-      item.appendChild(head);
-
-      const passageEl = document.createElement('p');
-      passageEl.className = 'ticket-citation-passage';
-      appendHighlightedPassage(passageEl, citation.passage, citation.quote);
-      item.appendChild(passageEl);
-
-      list.appendChild(item);
-    }
-    ticket.appendChild(list);
-  }
-
-  return ticket;
-}
-
-function renderRail(node) {
-  clearChildren(ticketSlot);
-  ticketSlot.appendChild(node);
-}
-
-function renderRetrieved(retrieved) {
-  if (detailsSummary) {
-    detailsSummary.textContent = `Retrieved passages (${retrieved.length})`;
-  }
-  clearChildren(retrievedBody);
+  const tbody = document.createElement('tbody');
   retrieved.forEach((passage, index) => {
     const row = document.createElement('tr');
 
@@ -210,14 +162,126 @@ function renderRetrieved(retrieved) {
     score.textContent = passage.score.toFixed(3);
     row.appendChild(score);
 
-    retrievedBody.appendChild(row);
+    tbody.appendChild(row);
   });
+  table.appendChild(tbody);
+
+  details.appendChild(table);
+  return details;
+}
+
+/** A decorative loading placeholder, not announced (the live region announces the real card once it lands). */
+function buildSkeletonCard() {
+  const card = document.createElement('article');
+  card.className = 'answer-card skeleton-card';
+  card.setAttribute('aria-hidden', 'true');
+  for (const modifier of ['question', 'label', 'answer', 'answer-short']) {
+    const line = document.createElement('div');
+    line.className = `skeleton-line skeleton-line--${modifier}`;
+    card.appendChild(line);
+  }
+  return card;
+}
+
+/** Builds one answer card: an answered card, or a calm "Not in the documents" refusal card. */
+function buildAnswerCard(question, result) {
+  const card = document.createElement('article');
+  card.className = result.answerable ? 'answer-card' : 'answer-card answer-card--refusal';
+
+  const questionEl = document.createElement('h2');
+  questionEl.className = 'answer-card-question';
+  questionEl.tabIndex = -1;
+  questionEl.textContent = question;
+  card.appendChild(questionEl);
+
+  if (result.answerable) {
+    const label = document.createElement('p');
+    label.className = 'answer-card-label';
+    label.textContent = 'Answer';
+    card.appendChild(label);
+
+    const answerText = document.createElement('p');
+    answerText.className = 'answer-card-text';
+    answerText.textContent = result.answer;
+    card.appendChild(answerText);
+  } else {
+    const refusal = document.createElement('div');
+    refusal.className = 'answer-refusal';
+    refusal.appendChild(buildRefusalIcon());
+
+    const label = document.createElement('p');
+    label.className = 'answer-card-label';
+    label.textContent = 'Not in the documents';
+    refusal.appendChild(label);
+
+    const answerText = document.createElement('p');
+    answerText.className = 'answer-card-text';
+    answerText.textContent = result.answer;
+    refusal.appendChild(answerText);
+
+    const hint = document.createElement('p');
+    hint.className = 'answer-refusal-hint';
+    hint.textContent = 'Try rephrasing your question, or add a PDF that covers it.';
+    refusal.appendChild(hint);
+
+    card.appendChild(refusal);
+  }
+
+  if (Array.isArray(result.citations) && result.citations.length > 0) {
+    const sourcesLabel = document.createElement('p');
+    sourcesLabel.className = 'answer-sources-label';
+    sourcesLabel.textContent = 'Sources';
+    card.appendChild(sourcesLabel);
+
+    const sources = document.createElement('ul');
+    sources.className = 'answer-sources';
+    for (const citation of result.citations) {
+      const item = document.createElement('li');
+      item.className = 'source-item';
+
+      const head = document.createElement('p');
+      head.className = 'source-head';
+      head.textContent = `${citation.source} · ${citation.location}`;
+      item.appendChild(head);
+
+      const passageEl = document.createElement('p');
+      passageEl.className = 'source-passage';
+      appendHighlightedPassage(passageEl, citation.passage, citation.quote);
+      item.appendChild(passageEl);
+
+      sources.appendChild(item);
+    }
+    card.appendChild(sources);
+  }
+
+  card.appendChild(buildRetrievedDetails(Array.isArray(result.retrieved) ? result.retrieved : []));
+
+  return card;
+}
+
+function prependCard(node) {
+  answersSection.insertBefore(node, answersSection.firstChild);
+}
+
+/** Shows a short hint only when the answers stack is empty; removes it otherwise. */
+function updateEmptyHint() {
+  const hasCards = answersSection.querySelector('.answer-card') !== null;
+  const existingHint = answersSection.querySelector('.answers-empty-hint');
+  if (hasCards) {
+    if (existingHint) existingHint.remove();
+    return;
+  }
+  if (existingHint) return;
+  const hint = document.createElement('p');
+  hint.className = 'answers-empty-hint';
+  hint.textContent = 'Ask a question above, or try an example, to see an answer here.';
+  answersSection.appendChild(hint);
 }
 
 function setBusy(isBusy) {
   askButton.disabled = isBusy;
   askButton.textContent = isBusy ? 'Asking…' : 'Ask';
-  rail.setAttribute('aria-busy', String(isBusy));
+  answersSection.setAttribute('aria-busy', String(isBusy));
 }
 
 function showError(message) {
@@ -231,7 +295,9 @@ function clearError() {
 async function askQuestion(question) {
   clearError();
   setBusy(true);
-  renderRail(buildSkeletonTicket());
+  const skeleton = buildSkeletonCard();
+  prependCard(skeleton);
+  updateEmptyHint();
 
   try {
     const response = await fetch('/api/ask', {
@@ -239,24 +305,24 @@ async function askQuestion(question) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ question }),
     });
-
     const body = await response.json().catch(() => null);
+    skeleton.remove();
 
     if (!response.ok) {
       const message = body && typeof body.error === 'string' ? body.error : 'Something went wrong. Try again.';
       showError(message);
-      renderRail(buildEmptyTicket());
+      updateEmptyHint();
       return;
     }
 
-    renderRail(buildTicket(question, body));
-    renderRetrieved(Array.isArray(body.retrieved) ? body.retrieved : []);
-
-    const heading = document.getElementById('ticket-heading');
+    const card = buildAnswerCard(question, body);
+    prependCard(card);
+    const heading = card.querySelector('.answer-card-question');
     if (heading) heading.focus();
   } catch {
+    skeleton.remove();
     showError('Could not reach the server. Check your connection and try again.');
-    renderRail(buildEmptyTicket());
+    updateEmptyHint();
   } finally {
     setBusy(false);
   }
@@ -274,33 +340,103 @@ function updateCharCounter() {
   charCounter.textContent = remaining <= CHAR_COUNTER_THRESHOLD ? `${remaining} characters left` : '';
 }
 
+async function removeDocument(name, onFailureReset) {
+  try {
+    const response = await fetch(`/api/documents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const body = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const message = body && typeof body.error === 'string' ? body.error : 'Could not remove that document.';
+      uploadStatus.textContent = message;
+      onFailureReset();
+      return;
+    }
+
+    renderDocuments(Array.isArray(body.documents) ? body.documents : []);
+    uploadStatus.textContent = `Removed ${name}.`;
+  } catch {
+    uploadStatus.textContent = 'Could not reach the server. Check your connection and try again.';
+    onFailureReset();
+  }
+}
+
+/**
+ * A remove button that, on first click, turns into an inline "Confirm" for a
+ * few seconds (no modal, no confirm()); a second click within that window
+ * sends the DELETE. Reverts on timeout or on a failed delete.
+ */
+function buildRemoveButton(name) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'document-remove';
+  button.setAttribute('aria-label', `Remove ${name}`);
+  button.appendChild(buildRemoveIcon());
+
+  let confirming = false;
+  let revertTimer = null;
+
+  function reset() {
+    confirming = false;
+    if (revertTimer !== null) {
+      clearTimeout(revertTimer);
+      revertTimer = null;
+    }
+    clearChildren(button);
+    button.classList.remove('document-remove--confirming');
+    button.setAttribute('aria-label', `Remove ${name}`);
+    button.appendChild(buildRemoveIcon());
+  }
+
+  button.addEventListener('click', () => {
+    if (!confirming) {
+      confirming = true;
+      clearChildren(button);
+      button.textContent = 'Confirm';
+      button.classList.add('document-remove--confirming');
+      button.setAttribute('aria-label', `Confirm removing ${name}`);
+      revertTimer = setTimeout(reset, CONFIRM_WINDOW_MS);
+      return;
+    }
+    if (revertTimer !== null) {
+      clearTimeout(revertTimer);
+      revertTimer = null;
+    }
+    removeDocument(name, reset);
+  });
+
+  return button;
+}
+
+function buildDocumentItem(doc) {
+  const item = document.createElement('li');
+  item.className = 'document-item';
+
+  const name = document.createElement('span');
+  name.className = 'document-name';
+  name.textContent = doc.name;
+  item.appendChild(name);
+
+  const count = document.createElement('span');
+  count.className = 'document-count';
+  count.textContent = pluralize(doc.chunks, 'passage');
+  item.appendChild(count);
+
+  if (doc.builtIn) {
+    const badge = document.createElement('span');
+    badge.className = 'builtin-badge';
+    badge.textContent = 'Built-in';
+    item.appendChild(badge);
+  } else {
+    item.appendChild(buildRemoveButton(doc.name));
+  }
+
+  return item;
+}
+
 function renderDocuments(documents) {
   clearChildren(documentList);
-  const maxChunks = Math.max(1, ...documents.map((doc) => doc.chunks));
-
   for (const doc of documents) {
-    const item = document.createElement('li');
-    item.className = 'document-item';
-
-    const name = document.createElement('span');
-    name.className = 'document-name';
-    name.textContent = doc.name;
-    item.appendChild(name);
-
-    const count = document.createElement('span');
-    count.className = 'document-count';
-    count.textContent = pluralize(doc.chunks, 'passage');
-    item.appendChild(count);
-
-    const bar = document.createElement('div');
-    bar.className = 'extent-bar';
-    const fill = document.createElement('div');
-    fill.className = 'extent-bar-fill';
-    fill.style.setProperty('--extent', String(doc.chunks / maxChunks));
-    bar.appendChild(fill);
-    item.appendChild(bar);
-
-    documentList.appendChild(item);
+    documentList.appendChild(buildDocumentItem(doc));
   }
 }
 
@@ -311,7 +447,7 @@ async function loadDocuments() {
     const body = await response.json();
     renderDocuments(Array.isArray(body.documents) ? body.documents : []);
   } catch {
-    // The shelf just keeps its last known state; the ask flow surfaces connectivity problems.
+    // The list just keeps its last known state; the ask flow surfaces connectivity problems.
   }
 }
 
@@ -372,6 +508,6 @@ pdfInput.addEventListener('change', () => {
   if (file) uploadPdf(file);
 });
 
-renderRail(buildEmptyTicket());
+updateEmptyHint();
 updateCharCounter();
 loadDocuments();

@@ -102,7 +102,7 @@ npm run test:ui     # browser tests of the page; needs Google Chrome installed (
 npm run eval        # golden questions against whatever provider the environment points at
 ```
 
-Current state: `npm test` runs 136 passing tests and `npm run test:ui` runs 10.
+Current state: `npm test` runs 144 passing tests and `npm run test:ui` runs 12.
 
 ### Eval results
 
