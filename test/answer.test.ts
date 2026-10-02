@@ -6,7 +6,7 @@ import type { ChatMessage, Llm } from '../src/llm.js';
 import { ModelOutputError } from '../src/llm.js';
 import type { Embedder } from '../src/embeddings.js';
 import { answerQuestion, buildMessages, SYSTEM_PROMPT, TOP_K } from '../src/answer.js';
-import { bagOfWordsEmbedder } from './helpers.js';
+import { bagOfWordsEmbedder, parsePassagesFromUserMessage, scriptedLlm } from './helpers.js';
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -39,6 +39,17 @@ test('SYSTEM_PROMPT makes partial coverage answerable and keeps the full-refusal
   // The refusal line must be limited to questions with NO covered part.
   assert.match(SYSTEM_PROMPT, /respond with exactly[\s\S]*\{"answerable": false/);
   assert.match(SYSTEM_PROMPT, /no part of the question/i);
+});
+
+test('SYSTEM_PROMPT has a conflict rule: disagree, both values with sources, cite each, no winner', () => {
+  assert.match(SYSTEM_PROMPT, /conflict/i);
+  assert.match(SYSTEM_PROMPT, /documents disagree/i);
+  assert.match(SYSTEM_PROMPT, /source name/i);
+  assert.match(SYSTEM_PROMPT, /from EACH conflicting passage/);
+  assert.match(SYSTEM_PROMPT, /do not pick a winner/i);
+  // The conflict rule must not displace the partial-answer and refusal rules.
+  assert.match(SYSTEM_PROMPT, /at least one part of the question/);
+  assert.match(SYSTEM_PROMPT, /respond with exactly[\s\S]*\{"answerable": false/);
 });
 
 // --- buildMessages -----------------------------------------------------------
@@ -180,4 +191,40 @@ test('rejects with ModelOutputError when both the call and the retry are unreada
 
   await assert.rejects(() => answerQuestion({ store, llm }, 'What are your hours?'), ModelOutputError);
   assert.equal(calls, 2);
+});
+
+// --- conflicting documents -----------------------------------------------------
+
+test('keeps verified citations from two different sources when the LLM cites both conflicting passages', async () => {
+  const store = await buildFaqStore();
+  await store.addDocument('Winter Hours Notice', [
+    {
+      location: 'Notice',
+      text: 'Winter schedule: all locations are open Wednesday through Monday, 10:00 AM to 8:00 PM, and closed on Tuesdays.',
+    },
+  ]);
+  const question = 'What are your opening hours?';
+  const llm = scriptedLlm((messages) => {
+    const passages = parsePassagesFromUserMessage(messages);
+    const faq = passages.find((p) => p.source === FAQ_SOURCE && p.location === 'Hours');
+    const winter = passages.find((p) => p.source === 'Winter Hours Notice');
+    assert.ok(faq && winter, 'both conflicting passages must be retrieved');
+    return JSON.stringify({
+      answerable: true,
+      answer:
+        'The documents disagree. The Winter Hours Notice says Wednesday through Monday, 10:00 AM to 8:00 PM; the FAQ says Tuesday through Sunday, 11:00 AM to 9:00 PM.',
+      citations: [
+        { passage_id: winter.id, quote: 'open Wednesday through Monday, 10:00 AM to 8:00 PM' },
+        { passage_id: faq.id, quote: 'open Tuesday through Sunday, 11:00 AM to 9:00 PM' },
+      ],
+    });
+  });
+
+  const result = await answerQuestion({ store, llm }, question);
+
+  assert.equal(result.answerable, true);
+  assert.deepEqual(
+    result.citations.map((c) => c.source).sort(),
+    [FAQ_SOURCE, 'Winter Hours Notice'].sort(),
+  );
 });
