@@ -68,17 +68,44 @@ ASK
 | `src/grounding.ts` | Citation verification and the fixed refusal |
 | `src/app.ts` | HTTP routes and validation (`createApp({ store, llm })`) |
 | `src/server.ts` | Wiring and startup checks |
+| `src/auth.ts` | `AUTH_MODE` routers: Cognito OAuth (PKCE + state, session cookie, JWT verification, Origin check) or a synthetic local admin |
+| `src/limits.ts` | Rate limiters, the daily ask cap, and the document/chunk capacity guards |
+| `src/bootstrap.ts` | Reads `AUTH_MODE`, the limit variables and `TRUST_PROXY_HOPS`, builds `auth`/`limits` for `server.ts` |
 | `public/` | The single page (plain HTML, CSS and JavaScript) |
+
+## Authentication and abuse limits
+
+`AUTH_MODE` selects `cognito` or `none`; it fails closed — unset, or `none` in production (`NODE_ENV=production`), refuses to start. In `cognito` mode every route except `/healthz` and `/auth/*` requires a signed-in session: `/auth/login` starts an OAuth authorization-code flow with PKCE and a `state` nonce against the Cognito-managed login page, `/auth/callback` exchanges the code and verifies the resulting ID token (`aws-jwt-verify`) before setting it as an `httpOnly` session cookie, and `/auth/logout` clears it. There is no public sign-up; an administrator creates every account (see "Create users" below). Everyone signed in can ask questions; only members of the `admins` Cognito group can upload or delete documents. Every mutating `/api` request also checks the `Origin` header against the request's own origin, failing closed (`403`) when it is missing or cross-site. Behind a reverse proxy such as App Runner, `TRUST_PROXY_HOPS` tells Express how many hops to trust so `req.ip`/`req.protocol` (and the Origin check) see the real client instead of the proxy. Rate limits and the daily cap below protect `/api/ask` and `/api/documents` against abuse.
+
+| Variable | Default | Required for |
+|---|---|---|
+| `AUTH_MODE` | `none` (fails to start if `NODE_ENV=production`) | — |
+| `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET`, `COGNITO_DOMAIN` | none | `AUTH_MODE=cognito` |
+| `TRUST_PROXY_HOPS` | `0` | reverse proxies (App Runner: `1`) |
+| `RATE_LIMIT_ASK_PER_MINUTE` | `20` per user/IP | — |
+| `DAILY_ASK_LIMIT` | `500` globally per UTC day | — |
+| `RATE_LIMIT_UPLOADS_PER_HOUR` | `10` per user/IP | — |
+| `RATE_LIMIT_DELETES_PER_HOUR` | `30` per user/IP | — |
+| `MAX_DOCUMENTS` | `20` | — |
+| `MAX_PDF_PAGES` | `100` | — |
+| `MAX_TOTAL_CHUNKS` | `3000` | — |
+| `PDF_PARSE_TIMEOUT_MS` | `15000` | — |
+
+Local development runs with `AUTH_MODE=none` (the default when unset): a synthetic local admin is attached to every request, so nothing is actually protected — do not run it that way in production.
 
 ## API
 
 | Method and path | Body | Success | Errors |
 |---|---|---|---|
-| `POST /api/ask` | `{ "question": "..." }` | `200 { answerable, answer, citations: [{ source, location, quote, passage }], retrieved: [{ source, location, score }] }` | `400` empty, over 500 characters or not JSON; `502` model or embedding failure |
-| `GET /api/documents` | | `200 { documents: [{ name, chunks, builtIn }] }` | |
-| `POST /api/documents` | multipart field `file` | `201 { document: { name, chunks } }` | `400` no file; `413` over 10 MB; `415` not a PDF (checked by magic bytes); `422` scanned, encrypted or unreadable; `502` embedding failure |
-| `DELETE /api/documents/:name` | | `200 { removed, documents: [{ name, chunks, builtIn }] }` | `403` built-in FAQ; `404` unknown document name |
-| `GET /healthz` | | `200 { status: "ok", documents, provider }` | |
+| `GET /auth/login` | | `302` to the Cognito hosted login | |
+| `GET /auth/callback` | query `code`, `state` | `302` to `/` with a session cookie set | `400` expired/invalid sign-in link; `401` token exchange or verification failed |
+| `GET /auth/logout` | | `302` to the Cognito hosted logout, clears the session cookie | |
+| `GET /api/me` | | `200 { email, isAdmin, authMode }` | |
+| `POST /api/ask` | `{ "question": "..." }` | `200 { answerable, answer, citations: [{ source, location, quote, passage }], retrieved: [{ source, location, score }] }` | `400` empty, over 500 characters or not JSON; `401` not signed in; `403` missing/cross-site `Origin`; `429` rate limit or daily cap; `502` model or embedding failure |
+| `GET /api/documents` | | `200 { documents: [{ name, chunks, builtIn }] }` | `401` not signed in |
+| `POST /api/documents` | multipart field `file` | `201 { document: { name, chunks } }` | `400` no file; `401` not signed in; `403` not an admin or missing/cross-site `Origin`; `413` over 10 MB; `415` not a PDF (checked by magic bytes); `422` scanned, encrypted or unreadable; `429` rate limit; `502` embedding failure |
+| `DELETE /api/documents/:name` | | `200 { removed, documents: [{ name, chunks, builtIn }] }` | `401` not signed in; `403` not an admin, built-in FAQ, or missing/cross-site `Origin`; `404` unknown document name; `429` rate limit |
+| `GET /healthz` | | `200 { status: "ok", documents, provider }` | anonymous, no auth required |
 
 Every error body is `{ "error": "<what happened and what to do next>" }`.
 
@@ -98,7 +125,7 @@ Every error body is `{ "error": "<what happened and what to do next>" }`.
 | `BEDROCK_EMBEDDING_MODEL_ID` | | `amazon.titan-embed-text-v2:0` |
 | `PORT` (optional) | `3000` | set by the platform |
 
-The server refuses to start when a variable required by the active provider is missing, and names every missing one. With `openai-compatible` it also refuses to start when `LLM_MODEL` is not in `GET {LLM_BASE_URL}/models`. Bedrock credentials come only from the AWS default credential chain (a local profile on a laptop, the service's IAM role in AWS); no AWS keys go in environment variables. `.env` is git-ignored.
+The server refuses to start when a variable required by the active provider is missing, and names every missing one. With `openai-compatible` it also refuses to start when `LLM_MODEL` is not in `GET {LLM_BASE_URL}/models`. Bedrock credentials come only from the AWS default credential chain (a local profile on a laptop, the service's IAM role in AWS); no AWS keys go in environment variables. `.env` is git-ignored. `AUTH_MODE`, the Cognito variables, `TRUST_PROXY_HOPS` and the abuse-limit variables are documented in "Authentication and abuse limits" above.
 
 ## Decisions and trade-offs
 
@@ -115,6 +142,9 @@ The server refuses to start when a variable required by the active provider is m
 | One retry on unreadable output, then 502 | Models occasionally return empty or truncated JSON | Valid JSON with the wrong shape is treated as a refusal instead |
 | Gemma 4 E4B as the local model | With `json_schema`, LM Studio returned Qwen 3.5's whole answer in `reasoning_content` and left `content` empty | A 4B model reasons less carefully than the production model |
 | `textContent` only and a strict Content-Security-Policy | PDF text is untrusted and is rendered as text, never as markup | No inline scripts or styles anywhere |
+| Cognito OAuth handled inside the app (`src/auth.ts`), not an ALB/API Gateway authorizer | App Runner has no built-in authentication layer in front of it, unlike an ALB or API Gateway | The app owns session cookies, PKCE and JWT verification itself instead of delegating to managed infrastructure |
+| Rate limits and the daily ask cap live in process memory (`src/limits.ts`) | The service already runs exactly one instance (the vector store requires it), so there is no multi-instance count to coordinate | Counters reset on every restart, and App Runner briefly runs two instances during a deploy, each with its own counters |
+| Two-phase `terraform apply` for the Cognito app client's callback URL | The App Runner service URL does not exist until the first apply creates it, and the Cognito client needs that URL as a callback — referencing it from the same apply would be a dependency cycle | A deploy always needs a second `apply` once the service URL is known, before the real OAuth login works end to end |
 
 ## Tests
 
@@ -125,7 +155,7 @@ npm run test:ui     # browser tests of the page; needs Google Chrome installed (
 npm run eval        # golden questions against whatever provider the environment points at
 ```
 
-Current state: `npm test` runs 144 passing tests and `npm run test:ui` runs 12.
+Current state: `npm test` runs 235 passing tests and `npm run test:ui` runs 17.
 
 ### Eval results
 
@@ -148,9 +178,11 @@ aws sts get-caller-identity --profile grounded-qa --query Account --output text 
 
 ## Deploy to AWS App Runner
 
-One container serves the API and the page. The vector store lives in process memory, so the service runs exactly one instance (auto scaling pinned to min 1 / max 1). The image is the existing multi-stage `Dockerfile` (`node:22-slim`, non-root user, compiled JavaScript), pushed to ECR. The service reaches Bedrock through its instance role: no AWS keys in its environment. Terraform lives in [`infra/`](infra/); the full runbook, with sources, is [`infra/DEPLOY.md`](infra/DEPLOY.md).
+One container serves the API and the page. The vector store lives in process memory, so the service runs exactly one instance (auto scaling pinned to min 1 / max 1). The image is the existing multi-stage `Dockerfile` (`node:22-slim`, non-root user, compiled JavaScript), pushed to ECR. The service reaches Bedrock through its instance role: no AWS keys in its environment. Terraform lives in [`infra/`](infra/); the full runbook, with sources and the admin one-time steps below, is [`infra/DEPLOY.md`](infra/DEPLOY.md).
 
-> App Runner stopped accepting new customers on 2026-04-30. If this account never had an App Runner service, step 4 fails; the fallback is ECS Express Mode (see DEPLOY.md).
+> App Runner stopped accepting new customers on 2026-04-30. If this account never had an App Runner service, the apply below fails creating the service; the fallback is ECS Express Mode (see DEPLOY.md).
+
+Every role Terraform creates (`grounded-qa-*`) is capped by a permissions boundary created once by an administrator, outside Terraform, so the deploy user that runs `terraform apply` can never escalate itself through a role it creates — see [`infra/DEPLOY.md`, "Admin one-time steps"](infra/DEPLOY.md#admin-one-time-steps-cloudshell) for that setup and why it was needed.
 
 ```bash
 export AWS_PROFILE=grounded-qa AWS_REGION=us-east-1
@@ -159,11 +191,25 @@ terraform apply -target=aws_ecr_repository.app               # 2. the ECR reposi
 REPO="$(terraform output -raw ecr_repository_url)"           # 3. build for linux/amd64 and push
 aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
 docker buildx build --platform linux/amd64 -t "${REPO}:latest" --push ..   # braces matter in zsh: $REPO:l is a modifier
-terraform apply                                              # 4. roles, single-instance scaling, the service
-terraform output -raw service_url                            # 5. the live URL
+terraform apply -var "alert_email=<your-email>"               # 4. roles, Cognito, budget, single-instance scaling, the service
+terraform apply -var "alert_email=<your-email>" \
+  -var "app_url=$(terraform output -raw service_url)"          # 4b. second apply: real OAuth callback/logout URL
 ```
 
-The service gets `PROVIDER=bedrock`, `AWS_REGION`, `BEDROCK_CHAT_MODEL_ID` and `BEDROCK_EMBEDDING_MODEL_ID` as plain environment variables, port 3000 and an HTTP health check on `/healthz`. Size: 0.25 vCPU / 1 GB.
+Create the first admin user (no public sign-up; see "Authentication and abuse limits" above):
+
+```bash
+aws cognito-idp admin-create-user --profile "$AWS_PROFILE" \
+  --user-pool-id "$(terraform output -raw cognito_user_pool_id)" \
+  --user-attributes Name=email,Value=<user-email> Name=email_verified,Value=true \
+  --desired-delivery-mediums EMAIL
+
+aws cognito-idp admin-add-user-to-group --profile "$AWS_PROFILE" \
+  --user-pool-id "$(terraform output -raw cognito_user_pool_id)" \
+  --username <user-email> --group-name admins
+```
+
+The service gets `PROVIDER=bedrock`, `AWS_REGION`, `BEDROCK_CHAT_MODEL_ID`, `BEDROCK_EMBEDDING_MODEL_ID`, `AUTH_MODE=cognito`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` and `TRUST_PROXY_HOPS=1` as plain environment variables, plus `COGNITO_CLIENT_SECRET` as an App Runner runtime secret resolved from an SSM `SecureString` parameter (never a plain environment variable), port 3000 and an HTTP health check on `/healthz`. Size: 0.25 vCPU / 1 GB.
 
 ### IAM policy for the service
 
@@ -196,27 +242,35 @@ To switch the chat model to the Nova Lite fallback, add `arn:aws:bedrock:us-east
 | App Runner active vCPU (0.25 vCPU × $0.064/vCPU-hour, only while serving requests; light testing) | a few cents |
 | ECR storage (~0.3 GB × $0.10/GB-month; free tier covers it the first year) | ~$0.03 |
 | Bedrock (DeepSeek V3.2 $0.62 / $1.85 per 1M input / output tokens; Titan v2 negligible) | ~$0.002 per question |
+| Cognito, Essentials tier (free up to 10,000 monthly active users, this project's handful of admin-created accounts stays under that) | $0 |
+| SSM Parameter Store (`Standard` tier parameter for the client secret) | $0 |
+| AWS Budgets action (first two action-enabled budgets per account are free) | $0, unless this is the account's 3rd+ action-enabled budget (~$3/month) |
 | **Total for a mostly idle demo** | **~$5.25–5.40 per month** |
 
 Local development on LM Studio costs nothing. Arithmetic and sources are in DEPLOY.md.
 
-### Cost alert at 10 USD
+### Cost alert and kill switch
+
+The $10/month budget and its automatic action are Terraform-managed (`infra/budget.tf`, created in the apply above with the `alert_email` you passed), not a manual AWS CLI call:
+
+- At 80% of actual spend ($8), `alert_email` gets a warning.
+- At 100%, AWS Budgets automatically attaches a Deny policy on `bedrock:InvokeModel`/`InvokeModelWithResponseStream` to the App Runner instance role — the app stays up, but every Bedrock call starts failing — and `alert_email` is notified.
+
+This is a backstop, not a real-time guard: AWS Budgets refreshes actual spend a few times a day, not per request, so the in-app daily ask cap (`DAILY_ASK_LIMIT`, see "Authentication and abuse limits" above) is what actually limits damage within a day. Lifting the kill switch is manual by design, once the cause is understood ([`infra/DEPLOY.md`, step 6](infra/DEPLOY.md#6-cost-alert-and-kill-switch-terraform-managed-created-in-step-4)):
 
 ```bash
-ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-aws budgets create-budget --account-id "$ACCOUNT_ID" \
-  --budget '{"BudgetName":"grounded-qa-monthly","BudgetType":"COST","TimeUnit":"MONTHLY","BudgetLimit":{"Amount":"10","Unit":"USD"}}' \
-  --notifications-with-subscribers '[{"Notification":{"NotificationType":"ACTUAL","ComparisonOperator":"GREATER_THAN","Threshold":80,"ThresholdType":"PERCENTAGE"},"Subscribers":[{"SubscriptionType":"EMAIL","Address":"<your-email>"}]}]'
+aws iam detach-role-policy --profile "$AWS_PROFILE" \
+  --role-name grounded-qa-apprunner-instance \
+  --policy-arn arn:aws:iam::<account-id>:policy/grounded-qa-bedrock-kill-switch
 ```
-
-This emails you once actual spend passes 80% of 10 USD in a calendar month.
 
 ### Teardown
 
 ```bash
-cd infra && terraform destroy          # service, roles, scaling configuration and the ECR repository (force_delete)
-aws budgets delete-budget --account-id "$ACCOUNT_ID" --budget-name grounded-qa-monthly
+cd infra && terraform destroy -var "alert_email=<your-email>"
 ```
+
+This removes the service, roles, scaling configuration, the ECR repository (`force_delete`), the Cognito user pool (and every user in it — there is no recovery once it is deleted), its domain and app client, the SSM parameter holding the client secret, and the budget and kill-switch action. It does not remove the permissions boundary or the deploy user, both created once by an administrator outside Terraform; see [`infra/DEPLOY.md`, "Teardown"](infra/DEPLOY.md#7-teardown) for removing those by hand.
 
 ### Smoke test against the live URL
 
