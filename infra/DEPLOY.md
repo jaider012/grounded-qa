@@ -23,14 +23,17 @@ file into CloudShell as `deploy-policy.json`:
 
 ```bash
 aws iam create-user --user-name grounded-qa-deploy
-aws iam put-user-policy --user-name grounded-qa-deploy \
-  --policy-name grounded-qa-deploy --policy-document file://deploy-policy.json
+# A customer managed policy, not an inline one: inline user policies are capped at 2,048 characters.
+aws iam create-policy --policy-name grounded-qa-deploy --policy-document file://deploy-policy.json
+aws iam attach-user-policy --user-name grounded-qa-deploy \
+  --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-deploy
 aws iam create-access-key --user-name grounded-qa-deploy \
   --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text
 ```
 
 Then, on your laptop, store the two values in the profile (typed into the prompts, never
-pasted anywhere else):
+pasted anywhere else; if a secret key ends up in a chat, a ticket or a log, delete that
+key with `aws iam delete-access-key` and create a new one):
 
 ```bash
 aws configure --profile grounded-qa   # access key, secret key, region us-east-1, output json
@@ -178,7 +181,20 @@ aws budgets delete-budget --profile "$AWS_PROFILE" \
 ```
 
 `force_delete = true` on the ECR repository means `terraform destroy` removes it even with
-images still pushed, so this is the only command needed to tear down the AWS side.
+images still pushed, so this is the only command needed to tear down the deployed stack.
+
+To also remove the deploy user once you are done with the project (from CloudShell, as an
+administrator):
+
+```bash
+for key in $(aws iam list-access-keys --user-name grounded-qa-deploy --query 'AccessKeyMetadata[].AccessKeyId' --output text); do
+  aws iam delete-access-key --user-name grounded-qa-deploy --access-key-id "$key"
+done
+aws iam detach-user-policy --user-name grounded-qa-deploy \
+  --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-deploy
+aws iam delete-policy --policy-arn arn:aws:iam::717279723515:policy/grounded-qa-deploy
+aws iam delete-user --user-name grounded-qa-deploy
+```
 
 ## Fallback if App Runner rejects this account
 
