@@ -168,9 +168,24 @@
         "budgets:DescribeBudgetAction",
         "budgets:DescribeBudgetActionsForBudget",
         "budgets:UpdateBudgetAction",
-        "budgets:DeleteBudgetAction"
+        "budgets:DeleteBudgetAction",
+        "budgets:ListTagsForResource",
+        "budgets:TagResource",
+        "budgets:UntagResource"
       ],
-      "Resource": "arn:aws:budgets::717279723515:budget/grounded-qa-monthly"
+      "Resource": [
+        "arn:aws:budgets::717279723515:budget/grounded-qa-monthly",
+        "arn:aws:budgets::717279723515:budget/grounded-qa-monthly/action/*"
+      ]
+    },
+    {
+      "Sid": "ReadOnlyCallsWithoutResourceScope",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:DescribeUserPoolDomain",
+        "ssm:DescribeParameters"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "ManageGroundedQaCognito",
