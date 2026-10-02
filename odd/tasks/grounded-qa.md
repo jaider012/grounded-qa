@@ -98,6 +98,17 @@ Plan approved by the user; container choice: App Runner (caveat: closed to new c
 - [x] T12 README sections from the brief (LM Studio, Bedrock, model access, AWS access, deploy, IAM policy, smoke test, cost, 10 USD budget, teardown); LocalStack notes removed at the user's request. Route: inline.
 - [x] T13 Evals: LM Studio (gemma-4-e4b + nomic) 13/13; Bedrock (deepseek.v3.2 + Titan v2, account 717279723515, temporary root CloudShell credentials) 11/13, partial 0/2 because DeepSeek returns answerable:false for partially covered questions (raw output checked; prompt left unchanged per the brief).
 
+## Brief 3: security layers (approved 2026-10-01, user chose "Cognito en la app")
+
+Context: App Runner deploy is blocked on the deploy user's iam:PassRole until an admin sets the corrected policy version. Security review found a privilege-escalation path in the deploy-user policy (role creation + arbitrary policy attachment); fix with a permissions boundary. The deploy user's current key was pasted in chat; user asked to deactivate it.
+
+- Branch: `feat/security-layers` (from `main` @ `0671924`). The three writers left their work uncommitted on `main`; the parent moved it to this branch and committed it as three work units on 2026-10-02.
+- [x] T14 Backend security: AUTH_MODE (cognito | none, fail-closed in production), Cognito OAuth code flow with PKCE + state, session cookie (httpOnly, Secure, SameSite=Lax), JWT verification with aws-jwt-verify, admins group for upload/delete, Origin check on state-changing requests, per-user/IP rate limits, global daily ask cap, upload limits (documents, pages, chunks, parse timeout). Route: delegated writer (src/, test/*.test.ts, package.json). Parent spot check: `npm test` 222/222, `npm run typecheck` exit 0, lockfile 0 symlink keys. Commit `ba450a7`.
+- [x] T15 Frontend auth: /api/me, sign-out, admin-only controls, 401 → login. Route: delegated writer after T14 (public/, test/ui/). Parent spot check: `npm run test:ui` 17/17. Commit `1ec55bf`.
+- [x] T16 Infra security: Cognito user pool (admin-only sign-up, Essentials, managed login), client with secret in SSM, App Runner env/secrets, budget + automatic action that denies bedrock:InvokeModel, permissions boundary for every grounded-qa role, updated deploy-user policy, admin one-time steps in DEPLOY.md. Route: delegated writer (infra/), parallel with T14. Writer evidence: `terraform fmt` clean, `terraform validate` pass, deploy-user policy 4,295 chars (limit 6,144). Open assumption: `cognito-idp:*` scoped to `userpool/*` (fails closed if wrong). Commit `dd3510b` (includes the zsh `${REPO}` README fix).
+- [ ] T17 Docs + independent security review of T14–T16. Route: inline docs + fresh read-only reviewer (running).
+- [ ] T18 Deploy: admin one-time steps in CloudShell (deactivate the leaked deploy-user key, create the boundary, new deploy-user policy version), then the two-phase `terraform apply`, create the first admin user, smoke test. Route: inline (parent runs the commands with the user's fresh admin credentials). Blocked: the 2026-10-02 temporary credentials expired at 02:44 UTC before T17 finished.
+
 ## Pending (user-owned)
 
 - DeepSeek/OpenAI eval run (needs keys in `.env`).
@@ -106,4 +117,4 @@ Plan approved by the user; container choice: App Runner (caveat: closed to new c
 
 ## Next step
 
-Apply material findings from the finish review (if any), then close.
+Apply the must-fix findings from the T17 security review, then T18 with fresh admin credentials.
