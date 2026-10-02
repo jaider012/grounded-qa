@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import OpenAI from 'openai';
-import type { LlmConfig } from '../src/config.js';
+import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import type { BedrockConfig, Config, LlmConfig } from '../src/config.js';
 import {
   ANSWER_SCHEMA,
   ModelOutputError,
   assertModelAvailable,
+  createBedrockLlm,
+  createLlm,
   createOpenAILlm,
   listModels,
   parseModelJson,
@@ -59,8 +62,6 @@ const baseConfig: LlmConfig = {
   baseURL: 'https://fake.test/v1',
   apiKey: 'test-key',
   model: 'test-model',
-  jsonMode: 'json_schema',
-  extraBody: {},
 };
 
 interface CapturedRequest {
@@ -112,7 +113,7 @@ test('createOpenAILlm posts to /chat/completions with temperature 0 and the conf
   assert.equal(calls[0]?.body['max_tokens'], 800);
 });
 
-test('createOpenAILlm uses a json_schema response_format named grounded_answer in json_schema mode', async () => {
+test('createOpenAILlm always uses a json_schema response_format named grounded_answer', async () => {
   const { fetch, calls } = fakeFetch(() => ({ body: chatCompletionResponse({ content: '{}' }) }));
   const client = new OpenAI({ baseURL: baseConfig.baseURL, apiKey: baseConfig.apiKey, fetch });
   const llm = createOpenAILlm(baseConfig, { client });
@@ -123,30 +124,6 @@ test('createOpenAILlm uses a json_schema response_format named grounded_answer i
     type: 'json_schema',
     json_schema: { name: 'grounded_answer', strict: true, schema: ANSWER_SCHEMA },
   });
-});
-
-test('createOpenAILlm uses a json_object response_format in json_object mode', async () => {
-  const config: LlmConfig = { ...baseConfig, jsonMode: 'json_object' };
-  const { fetch, calls } = fakeFetch(() => ({ body: chatCompletionResponse({ content: '{}' }) }));
-  const client = new OpenAI({ baseURL: config.baseURL, apiKey: config.apiKey, fetch });
-  const llm = createOpenAILlm(config, { client });
-
-  await llm.complete([{ role: 'user', content: 'q' }]);
-
-  assert.deepEqual(calls[0]?.body['response_format'], { type: 'json_object' });
-});
-
-test('createOpenAILlm merges extraBody into the request, spread last', async () => {
-  const config: LlmConfig = { ...baseConfig, extraBody: { thinking: { type: 'disabled' } } };
-  const { fetch, calls } = fakeFetch(() => ({ body: chatCompletionResponse({ content: '{}' }) }));
-  const client = new OpenAI({ baseURL: config.baseURL, apiKey: config.apiKey, fetch });
-  const llm = createOpenAILlm(config, { client });
-
-  await llm.complete([{ role: 'user', content: 'q' }]);
-
-  assert.deepEqual(calls[0]?.body['thinking'], { type: 'disabled' });
-  // Explicit fields configured by this module are still present alongside it.
-  assert.equal(calls[0]?.body['temperature'], 0);
 });
 
 test('createOpenAILlm respects a custom maxTokens option', async () => {
@@ -234,4 +211,149 @@ test('listModels returns the ids from the models list endpoint', async () => {
 
   assert.deepEqual(ids, ['a', 'b']);
   assert.ok(calls[0]?.url.endsWith('/models'));
+});
+
+// --- createBedrockLlm --------------------------------------------------------
+
+const bedrockConfig: BedrockConfig = {
+  region: 'us-east-1',
+  chatModelId: 'test-chat-model',
+  embeddingModelId: 'test-embedding-model',
+};
+
+interface FakeBedrockClient {
+  send(command: unknown): Promise<unknown>;
+}
+
+function fakeBedrockClient(respond: (command: unknown) => unknown): {
+  client: FakeBedrockClient;
+  calls: unknown[];
+} {
+  const calls: unknown[] = [];
+  return {
+    client: {
+      async send(command: unknown): Promise<unknown> {
+        calls.push(command);
+        return respond(command);
+      },
+    },
+    calls,
+  };
+}
+
+test('createBedrockLlm sends one ConverseCommand with modelId, system, messages, and inferenceConfig', async () => {
+  const { client, calls } = fakeBedrockClient(() => ({
+    output: { message: { role: 'assistant', content: [{ text: '{}' }] } },
+  }));
+  const llm = createBedrockLlm(bedrockConfig, { client });
+
+  await llm.complete([
+    { role: 'system', content: 'You are grounded.' },
+    { role: 'user', content: 'Are you open on Mondays?' },
+  ]);
+
+  assert.equal(calls.length, 1);
+  const command = calls[0];
+  assert.ok(command instanceof ConverseCommand);
+  assert.deepEqual(command.input, {
+    modelId: 'test-chat-model',
+    system: [{ text: 'You are grounded.' }],
+    messages: [{ role: 'user', content: [{ text: 'Are you open on Mondays?' }] }],
+    inferenceConfig: { temperature: 0, maxTokens: 2000 },
+  });
+});
+
+test('createBedrockLlm reads only the text blocks, ignoring reasoningContent', async () => {
+  const { client } = fakeBedrockClient(() => ({
+    output: {
+      message: {
+        role: 'assistant',
+        content: [
+          { reasoningContent: { reasoningText: { text: 'internal reasoning, not the answer' } } },
+          { text: '{"answerable":true,"answer":"Yes.","citations":[]}' },
+        ],
+      },
+    },
+  }));
+  const llm = createBedrockLlm(bedrockConfig, { client });
+
+  const result = await llm.complete([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'q' },
+  ]);
+
+  assert.equal(result, '{"answerable":true,"answer":"Yes.","citations":[]}');
+});
+
+test('createBedrockLlm throws a ModelOutputError when the response has no text blocks', async () => {
+  const { client } = fakeBedrockClient(() => ({
+    output: {
+      message: {
+        role: 'assistant',
+        content: [{ reasoningContent: { reasoningText: { text: 'only reasoning' } } }],
+      },
+    },
+  }));
+  const llm = createBedrockLlm(bedrockConfig, { client });
+
+  await assert.rejects(
+    () => llm.complete([{ role: 'user', content: 'q' }]),
+    ModelOutputError,
+  );
+});
+
+test('createBedrockLlm throws a clear message when Bedrock denies model access', async () => {
+  const deniedError = Object.assign(new Error('not authorized to invoke model'), {
+    name: 'AccessDeniedException',
+  });
+  const { client } = fakeBedrockClient(() => {
+    throw deniedError;
+  });
+  const llm = createBedrockLlm(bedrockConfig, { client });
+
+  await assert.rejects(
+    () => llm.complete([{ role: 'user', content: 'q' }]),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Bedrock denied access to test-chat-model in us-east-1/);
+      assert.equal((error as Error & { cause?: unknown }).cause, deniedError);
+      return true;
+    },
+  );
+});
+
+test('createBedrockLlm throws a clear message when Bedrock rejects the request as invalid', async () => {
+  const validationError = Object.assign(new Error('unsupported field'), { name: 'ValidationException' });
+  const { client } = fakeBedrockClient(() => {
+    throw validationError;
+  });
+  const llm = createBedrockLlm(bedrockConfig, { client });
+
+  await assert.rejects(
+    () => llm.complete([{ role: 'user', content: 'q' }]),
+    /Bedrock rejected the request for test-chat-model: unsupported field\. Check the model id and region\./,
+  );
+});
+
+// --- createLlm dispatcher --------------------------------------------------------
+
+test('createLlm builds an openai-compatible Llm when config.provider is openai-compatible', () => {
+  const config: Config = {
+    provider: 'openai-compatible',
+    llm: baseConfig,
+    embedding: { baseURL: baseConfig.baseURL, apiKey: baseConfig.apiKey, model: 'embed-model' },
+    port: 3000,
+  };
+
+  const llm = createLlm(config);
+
+  assert.equal(typeof llm.complete, 'function');
+});
+
+test('createLlm builds a Bedrock Llm when config.provider is bedrock', () => {
+  const config: Config = { provider: 'bedrock', bedrock: bedrockConfig, port: 3000 };
+
+  const llm = createLlm(config);
+
+  assert.equal(typeof llm.complete, 'function');
 });

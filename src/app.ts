@@ -14,6 +14,8 @@ export interface AppDeps {
   llm: Llm;
   /** Document names that cannot be removed through `DELETE /api/documents/:name` (e.g. the built-in FAQ). */
   protectedDocuments?: readonly string[];
+  /** The active provider name (e.g. "openai-compatible" or "bedrock"), surfaced on `GET /healthz`. */
+  provider?: string;
   log?: (message: string, error?: unknown) => void;
 }
 
@@ -75,7 +77,7 @@ function runMiddleware(
  */
 export function createApp(deps: AppDeps): express.Express {
   const log = deps.log ?? ((message: string, error?: unknown): void => console.error(message, error));
-  const { store, llm, protectedDocuments = [] } = deps;
+  const { store, llm, protectedDocuments = [], provider } = deps;
 
   /** Loaded documents in the `GET`/`DELETE` response shape, flagging names that cannot be removed. */
   function listDocumentsResponse(): Array<{ name: string; chunks: number; builtIn: boolean }> {
@@ -101,7 +103,7 @@ export function createApp(deps: AppDeps): express.Express {
   app.use(express.static(PUBLIC_DIR));
 
   app.get('/healthz', (_req, res) => {
-    res.status(200).json({ status: 'ok', documents: store.documentCount });
+    res.status(200).json({ status: 'ok', documents: store.documentCount, provider });
   });
 
   app.get('/api/documents', (_req, res) => {

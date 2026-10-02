@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, loadDotEnv } from '../src/config.js';
-import { assertModelAvailable, createOpenAILlm, listModels } from '../src/llm.js';
-import { createOpenAIEmbedder } from '../src/embeddings.js';
+import { assertModelAvailable, createLlm, listModels } from '../src/llm.js';
+import { createEmbedder } from '../src/embeddings.js';
 import { VectorStore } from '../src/store.js';
 import { FAQ_SOURCE, faqChunks } from '../src/faq.js';
 import { answerQuestion } from '../src/answer.js';
@@ -30,18 +30,23 @@ function pad(text: string, width: number): string {
 loadDotEnv();
 const config = loadConfig(process.env);
 
-console.log(
-  `Provider: LLM "${config.llm.model}" at ${config.llm.baseURL}; embeddings "${config.embedding.model}" at ${config.embedding.baseURL}`,
-);
+if (config.provider === 'openai-compatible') {
+  console.log(
+    `Provider: LLM "${config.llm.model}" at ${config.llm.baseURL}; embeddings "${config.embedding.model}" at ${config.embedding.baseURL}`,
+  );
+  const availableModels = await listModels(config.llm);
+  assertModelAvailable(availableModels, config.llm.model, config.llm.baseURL);
+} else {
+  console.log(
+    `Provider bedrock in ${config.bedrock.region}: chat ${config.bedrock.chatModelId}, embeddings ${config.bedrock.embeddingModelId}`,
+  );
+}
 
-const availableModels = await listModels(config.llm);
-assertModelAvailable(availableModels, config.llm.model, config.llm.baseURL);
-
-const embedder = createOpenAIEmbedder(config.embedding);
+const embedder = createEmbedder(config);
 const store = new VectorStore(embedder);
 await store.addDocument(FAQ_SOURCE, faqChunks());
 
-const llm = createOpenAILlm(config.llm);
+const llm = createLlm(config);
 
 const goldenPath = fileURLToPath(new URL('../eval/golden.json', import.meta.url));
 const rawGolden: unknown = JSON.parse(await readFile(goldenPath, 'utf8'));

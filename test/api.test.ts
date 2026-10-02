@@ -79,6 +79,35 @@ test('GET /healthz reports status ok and a document count', async () => {
   assert.ok(body.documents >= 1);
 });
 
+test('GET /healthz reports the configured provider', async () => {
+  const providerStore = new VectorStore(bagOfWordsEmbedder());
+  await providerStore.addDocument(FAQ_SOURCE, faqChunks());
+  const providerApp = createApp({
+    store: providerStore,
+    llm: scriptedLlm(refusalResponse),
+    provider: 'bedrock',
+    log: () => {
+      // Keep test output quiet.
+    },
+  });
+
+  const providerServer = providerApp.listen(0);
+  try {
+    await new Promise<void>((resolve) => providerServer.once('listening', () => resolve()));
+    const address = providerServer.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('Expected the test server to report a network address.');
+    }
+    const response = await fetch(`http://127.0.0.1:${address.port}/healthz`);
+    const body = await readJson(response);
+    assert.equal(body.provider, 'bedrock');
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      providerServer.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
 test('responses include the security headers', async () => {
   const response = await fetch(`${baseUrl}/healthz`);
   assert.equal(

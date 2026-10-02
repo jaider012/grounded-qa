@@ -1,7 +1,7 @@
 import { ConfigError, loadConfig, loadDotEnv } from './config.js';
 import type { Config } from './config.js';
-import { assertModelAvailable, createOpenAILlm, listModels } from './llm.js';
-import { createOpenAIEmbedder } from './embeddings.js';
+import { assertModelAvailable, createLlm, listModels } from './llm.js';
+import { createEmbedder } from './embeddings.js';
 import { VectorStore } from './store.js';
 import { FAQ_SOURCE, faqChunks } from './faq.js';
 import { createApp } from './app.js';
@@ -22,20 +22,23 @@ function loadConfigOrExit(): Config {
   }
 }
 
-async function listModelsOrExit(config: Config): Promise<string[]> {
+async function listModelsOrExit(llm: { baseURL: string; apiKey: string; model: string }): Promise<string[]> {
   try {
-    return await listModels(config.llm);
+    return await listModels(llm);
   } catch (error) {
     console.error(
-      `Could not list models at ${config.llm.baseURL}/models: ${reasonOf(error)}. Check LLM_BASE_URL and LLM_API_KEY.`,
+      `Could not list models at ${llm.baseURL}/models: ${reasonOf(error)}. Check LLM_BASE_URL and LLM_API_KEY.`,
     );
     process.exit(1);
   }
 }
 
-function assertModelAvailableOrExit(config: Config, available: readonly string[]): void {
+function assertModelAvailableOrExit(
+  llm: { baseURL: string; model: string },
+  available: readonly string[],
+): void {
   try {
-    assertModelAvailable(available, config.llm.model, config.llm.baseURL);
+    assertModelAvailable(available, llm.model, llm.baseURL);
   } catch (error) {
     console.error(reasonOf(error));
     process.exit(1);
@@ -46,9 +49,11 @@ async function addFaqOrExit(store: VectorStore, config: Config): Promise<void> {
   try {
     await store.addDocument(FAQ_SOURCE, faqChunks());
   } catch (error) {
-    console.error(
-      `Could not embed the built-in FAQ with EMBEDDING_MODEL "${config.embedding.model}" at ${config.embedding.baseURL}: ${reasonOf(error)}`,
-    );
+    const detail =
+      config.provider === 'openai-compatible'
+        ? `with EMBEDDING_MODEL "${config.embedding.model}" at ${config.embedding.baseURL}`
+        : `with BEDROCK_EMBEDDING_MODEL_ID "${config.bedrock.embeddingModelId}" in ${config.bedrock.region}`;
+    console.error(`Could not embed the built-in FAQ ${detail}: ${reasonOf(error)}`);
     process.exit(1);
   }
 }
@@ -56,16 +61,22 @@ async function addFaqOrExit(store: VectorStore, config: Config): Promise<void> {
 loadDotEnv();
 const config = loadConfigOrExit();
 
-const availableModels = await listModelsOrExit(config);
-console.log(`LLM models available at ${config.llm.baseURL}: ${availableModels.join(', ')}`);
-assertModelAvailableOrExit(config, availableModels);
+if (config.provider === 'openai-compatible') {
+  const availableModels = await listModelsOrExit(config.llm);
+  console.log(`LLM models available at ${config.llm.baseURL}: ${availableModels.join(', ')}`);
+  assertModelAvailableOrExit(config.llm, availableModels);
+} else {
+  console.log(
+    `Provider bedrock in ${config.bedrock.region}: chat ${config.bedrock.chatModelId}, embeddings ${config.bedrock.embeddingModelId}`,
+  );
+}
 
-const embedder = createOpenAIEmbedder(config.embedding);
+const embedder = createEmbedder(config);
 const store = new VectorStore(embedder);
 await addFaqOrExit(store, config);
 
-const llm = createOpenAILlm(config.llm);
-const app = createApp({ store, llm, protectedDocuments: [FAQ_SOURCE] });
+const llm = createLlm(config);
+const app = createApp({ store, llm, protectedDocuments: [FAQ_SOURCE], provider: config.provider });
 
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(

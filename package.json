@@ -17,6 +17,7 @@
     "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1145.0",
     "express": "^5.2.1",
     "multer": "^2.4.0",
     "openai": "^7.26.0",
